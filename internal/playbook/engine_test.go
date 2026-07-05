@@ -116,6 +116,59 @@ func TestEvaluateLikelyUpperBefore0945(t *testing.T) {
 	}
 }
 
+func TestEvaluateRTHIndicatorsIgnorePremarket(t *testing.T) {
+	loc := mustNY(t)
+	set := SettingsFromConfig(config.Defaults())
+	item := watchlist.Item{Symbol: "TEST", Order: 0}
+	bars := []data.Bar{
+		{
+			Time:   time.Date(2026, 7, 2, 9, 0, 0, 0, loc).UTC(),
+			Open:   90,
+			High:   100,
+			Low:    1,
+			Close:  80,
+			Volume: 10000,
+			VWAP:   75,
+		},
+		{
+			Time:   time.Date(2026, 7, 2, 9, 30, 0, 0, loc).UTC(),
+			Open:   10,
+			High:   11,
+			Low:    9,
+			Close:  10,
+			Volume: 100,
+			VWAP:   10,
+		},
+		{
+			Time:   time.Date(2026, 7, 2, 9, 31, 0, 0, loc).UTC(),
+			Open:   10,
+			High:   12,
+			Low:    8,
+			Close:  11,
+			Volume: 100,
+			VWAP:   11,
+		},
+	}
+
+	ev := Evaluate(item, bars, at(loc, 9, 31), loc, set, nil)
+
+	if ev.DayHigh != 12 {
+		t.Fatalf("day high = %.2f, want RTH HOD 12.00", ev.DayHigh)
+	}
+	if ev.DayLow != 8 {
+		t.Fatalf("day low = %.2f, want RTH LOD 8.00", ev.DayLow)
+	}
+	if ev.VWAP != 10.5 {
+		t.Fatalf("vwap = %.2f, want RTH VWAP 10.50", ev.VWAP)
+	}
+	if ev.Avg15 != 10.5 {
+		t.Fatalf("avg15 = %.2f, want RTH partial avg close 10.50", ev.Avg15)
+	}
+	if ev.First15Bars != 2 {
+		t.Fatalf("first15 bars = %d, want 2 RTH bars", ev.First15Bars)
+	}
+}
+
 func TestEvaluateReplayChartURLIncludesDateTimeAndSignalSide(t *testing.T) {
 	loc := mustNY(t)
 	set := SettingsFromConfig(config.Defaults())

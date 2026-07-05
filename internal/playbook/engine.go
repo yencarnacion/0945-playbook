@@ -42,6 +42,7 @@ type Evaluation struct {
 	VWAP               float64 `json:"vwap"`
 	VWAPRewardPct      float64 `json:"vwap_reward_pct"`
 	DayHigh            float64 `json:"day_high"`
+	DayLow             float64 `json:"day_low"`
 	HODRiskPct         float64 `json:"hod_risk_pct"`
 	TargetStopDistance float64 `json:"target_stop_distance"`
 	DistancePct        float64 `json:"distance_pct"`
@@ -171,8 +172,11 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 			dayLow = bar.Low
 		}
 
-		hlc3 := (bar.High + bar.Low + bar.Close) / 3
-		cumPV += hlc3 * bar.Volume
+		barVWAP := bar.VWAP
+		if barVWAP <= 0 {
+			barVWAP = (bar.High + bar.Low + bar.Close) / 3
+		}
+		cumPV += barVWAP * bar.Volume
 		cumVol += bar.Volume
 
 		if minutesAfterOpen < s.AvgCloseBars {
@@ -265,6 +269,7 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 	ev.VWAP = vwap
 	ev.VWAPRewardPct = vwapRewardPct
 	ev.DayHigh = dayHigh
+	ev.DayLow = dayLow
 	ev.HODRiskPct = hodRiskPct
 	ev.TargetStopDistance = targetStopDistance
 	ev.DistancePct = distancePct

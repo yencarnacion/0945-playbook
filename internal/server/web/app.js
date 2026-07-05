@@ -370,6 +370,9 @@ function rowHTML(row) {
     <td>${fmt(row.ratio, 3)}</td>
     <td class="${deltaClass}">${pct(row.delta_pct)}</td>
     <td>${money(row.price)}</td>
+    <td>${money(row.day_high)}</td>
+    <td>${money(row.day_low)}</td>
+    <td>${money(row.vwap)}</td>
     <td>${money(row.avg15)}</td>
     <td>${compact(row.first15_vol)}</td>
     <td>${pct(row.vwap_reward_pct)}</td>

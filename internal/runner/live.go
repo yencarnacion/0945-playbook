@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -24,10 +25,11 @@ type LiveRunner struct {
 	set       playbook.Settings
 	chartDate string
 
-	mu       sync.RWMutex
-	rows     []playbook.Evaluation
-	updated  time.Time
-	scanning bool
+	mu           sync.RWMutex
+	rows         []playbook.Evaluation
+	barsBySymbol map[string][]data.Bar
+	updated      time.Time
+	scanning     bool
 }
 
 func NewLive(project string, cfg config.Config, loc *time.Location, items []watchlist.Item, prov data.Provider) *LiveRunner {
@@ -52,15 +54,16 @@ func NewLive(project string, cfg config.Config, loc *time.Location, items []watc
 		})
 	}
 	return &LiveRunner{
-		project:   project,
-		cfg:       cfg,
-		loc:       loc,
-		items:     items,
-		prov:      prov,
-		set:       set,
-		chartDate: chartDate,
-		rows:      rows,
-		updated:   time.Now(),
+		project:      project,
+		cfg:          cfg,
+		loc:          loc,
+		items:        items,
+		prov:         prov,
+		set:          set,
+		chartDate:    chartDate,
+		rows:         rows,
+		barsBySymbol: make(map[string][]data.Bar, len(items)),
+		updated:      time.Now(),
 	}
 }
 
@@ -105,14 +108,35 @@ func (r *LiveRunner) scan(ctx context.Context) {
 	}()
 
 	now := time.Now().In(r.loc)
+	chartDate := now.Format("2006-01-02")
 	set := r.set
+	set.ChartDate = chartDate
 	set.ChartTime = chartClock(now)
-	start := sessionClock(now, r.loc, r.cfg.Session.Open)
-	if now.Before(start) {
-		start = start.Add(-15 * time.Minute)
+	open := sessionClock(now, r.loc, r.cfg.Session.Open)
+	closeTime := sessionClock(now, r.loc, r.cfg.Session.Close)
+
+	r.mu.Lock()
+	if chartDate != r.chartDate {
+		r.chartDate = chartDate
+		r.barsBySymbol = make(map[string][]data.Bar, len(r.items))
+	}
+	cachedBySymbol := cloneBarsBySymbol(r.barsBySymbol)
+	r.mu.Unlock()
+
+	if now.Before(open) {
+		rows := make([]playbook.Evaluation, len(r.items))
+		for i, item := range r.items {
+			rows[i] = waitEval(item, r.cfg, chartDate, set.ChartTime, "WAIT 09:30", "Regular session has not opened.")
+		}
+		r.mu.Lock()
+		r.rows = rows
+		r.updated = time.Now().In(r.loc)
+		r.mu.Unlock()
+		return
 	}
 
 	rows := make([]playbook.Evaluation, len(r.items))
+	mergedBars := make([][]data.Bar, len(r.items))
 	sem := make(chan struct{}, r.cfg.Massive.ConcurrentRequests)
 	var wg sync.WaitGroup
 	for i, item := range r.items {
@@ -124,24 +148,48 @@ func (r *LiveRunner) scan(ctx context.Context) {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				rows[i] = errorEval(item, r.cfg, "scan canceled", r.chartDate, set.ChartTime)
+				rows[i] = errorEval(item, r.cfg, "scan canceled", chartDate, set.ChartTime)
 				return
 			}
 
-			bars, err := r.prov.FetchBars(ctx, item.Symbol, start, now)
+			cached := cachedBySymbol[item.Symbol]
+			fetchStart := liveFetchStart(now, r.loc, r.cfg.Session.Open, cached)
+			bars, err := r.prov.FetchBars(ctx, item.Symbol, fetchStart, now)
 			if err != nil {
-				rows[i] = errorEval(item, r.cfg, err.Error(), r.chartDate, set.ChartTime)
+				rows[i] = errorEval(item, r.cfg, err.Error(), chartDate, set.ChartTime)
 				return
 			}
-			rows[i] = playbook.Evaluate(item, bars, now, r.loc, set, nil)
+			merged := mergeRTHBars(cached, bars, open, closeTime, r.loc)
+			mergedBars[i] = merged
+			rows[i] = playbook.Evaluate(item, merged, now, r.loc, set, nil)
 		}()
 	}
 	wg.Wait()
 
 	r.mu.Lock()
+	for i, item := range r.items {
+		if len(mergedBars[i]) > 0 {
+			r.barsBySymbol[item.Symbol] = mergedBars[i]
+		}
+	}
 	r.rows = rows
 	r.updated = time.Now().In(r.loc)
 	r.mu.Unlock()
+}
+
+func waitEval(item watchlist.Item, cfg config.Config, chartDate string, chartTime string, status string, reason string) playbook.Evaluation {
+	return playbook.Evaluation{
+		Symbol:   item.Symbol,
+		Name:     item.Name,
+		Industry: item.Industry,
+		Order:    item.Order,
+		Status:   status,
+		Action:   "WAIT",
+		Branch:   "-",
+		Phase:    "wait",
+		Reason:   reason,
+		ChartURL: chartURL(cfg.Scan.ChartBaseURL, item.Symbol, chartDate, chartTime, 0),
+	}
 }
 
 func errorEval(item watchlist.Item, cfg config.Config, msg string, chartDate string, chartTime string) playbook.Evaluation {
@@ -158,6 +206,64 @@ func errorEval(item watchlist.Item, cfg config.Config, msg string, chartDate str
 		Error:    msg,
 		ChartURL: chartURL(cfg.Scan.ChartBaseURL, item.Symbol, chartDate, chartTime, 0),
 	}
+}
+
+func cloneBarsBySymbol(src map[string][]data.Bar) map[string][]data.Bar {
+	out := make(map[string][]data.Bar, len(src))
+	for symbol, bars := range src {
+		if len(bars) == 0 {
+			continue
+		}
+		out[symbol] = append([]data.Bar(nil), bars...)
+	}
+	return out
+}
+
+func liveFetchStart(now time.Time, loc *time.Location, sessionOpen string, cached []data.Bar) time.Time {
+	open := sessionClock(now, loc, sessionOpen)
+	if len(cached) == 0 {
+		return open
+	}
+	last := cached[0].Time
+	for _, bar := range cached[1:] {
+		if bar.Time.After(last) {
+			last = bar.Time
+		}
+	}
+	start := last.In(loc).Truncate(time.Minute).Add(-time.Minute)
+	if start.Before(open) || start.After(now) {
+		return open
+	}
+	return start
+}
+
+func mergeRTHBars(existing []data.Bar, incoming []data.Bar, open time.Time, closeTime time.Time, loc *time.Location) []data.Bar {
+	byMinute := make(map[time.Time]data.Bar, len(existing)+len(incoming))
+	add := func(bar data.Bar) {
+		bt := bar.Time.In(loc)
+		if bt.Before(open) || !bt.Before(closeTime) {
+			return
+		}
+		minute := bt.Truncate(time.Minute)
+		key := time.Date(minute.Year(), minute.Month(), minute.Day(), minute.Hour(), minute.Minute(), 0, 0, loc).UTC()
+		bar.Time = key
+		byMinute[key] = bar
+	}
+	for _, bar := range existing {
+		add(bar)
+	}
+	for _, bar := range incoming {
+		add(bar)
+	}
+
+	out := make([]data.Bar, 0, len(byMinute))
+	for _, bar := range byMinute {
+		out = append(out, bar)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Time.Before(out[j].Time)
+	})
+	return out
 }
 
 func sessionClock(now time.Time, loc *time.Location, hhmm string) time.Time {
