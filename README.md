@@ -36,7 +36,7 @@ Live mode polls Massive aggregate bars using the official Go client dependency. 
 - The default source is 5-second bars reduced into one-minute candles so the first-15 signal matches the Pine logic while keeping the feed lighter than 1-second bars.
 - `scan.max_symbols: 0` means use the entire CSV watchlist, regardless of the file name.
 - `scan.min_first15_volume_filter` controls the dashboard volume filter; default is `400000`.
-- Replay runs at 1x by default, so one replay second advances one market second.
-- Replay chart links use `polygon-charts` deep links like `/api/open-chart/AAPL/2026-07-02/0945`.
+- Replay is manually controlled from the dashboard. Use the arrow buttons to step one minute at a time, or enter a specific time to hold that replay timestamp.
+- Chart links use `polygon-charts` deep links with the dashboard's current minute, for example `/api/open-chart/AAPL/2026-07-02/0933`.
 - The lower table defaults to signal-relevant rows only. The enlarged top strip keeps likely, active, and completed signal rows visible by EV score.
 - Replay uses cached JSON under `data/YYYY-MM-DD/`; run `download` before replaying a market day.

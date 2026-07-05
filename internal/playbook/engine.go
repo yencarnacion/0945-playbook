@@ -93,6 +93,19 @@ type tradeState struct {
 func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Location, s Settings, priorORBRanges []float64) Evaluation {
 	sort.Slice(bars, func(i, j int) bool { return bars[i].Time.Before(bars[j].Time) })
 
+	if loc == nil {
+		loc = time.Local
+	}
+	if now.IsZero() {
+		if len(bars) > 0 {
+			now = bars[len(bars)-1].Time
+		} else {
+			now = time.Now()
+		}
+	}
+	now = now.In(loc)
+	s.ChartTime = chartClock(now)
+
 	ev := Evaluation{
 		Symbol:   item.Symbol,
 		Name:     item.Name,
@@ -112,13 +125,6 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 		ev.Reason = "No bars loaded."
 		return finalize(ev, s)
 	}
-	if loc == nil {
-		loc = time.Local
-	}
-	if now.IsZero() {
-		now = bars[len(bars)-1].Time
-	}
-	now = now.In(loc)
 	ev.LastUpdated = now.Format(time.RFC3339)
 
 	open := sessionTime(now, loc, s.SessionOpen)
@@ -191,7 +197,7 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 			}
 		}
 
-		if minutesAfterOpen == s.EntryMinutesAfterOpen && !state.taken && !state.active {
+		if minutesAfterOpen >= s.EntryMinutesAfterOpen && !state.taken && !state.active {
 			evaluateEntry(&state, bar, idx, first15CloseSum, first15BarCount, first15Vol, first15DollarVol, dayHigh, cumPV, cumVol, first15High, first15Low, s, priorORBRanges)
 		}
 
@@ -757,6 +763,13 @@ func holdAction(side int) string {
 		return "BUY/HOLD"
 	}
 	return "SHORT/HOLD"
+}
+
+func chartClock(t time.Time) string {
+	if t.IsZero() {
+		return "0945"
+	}
+	return t.Format("1504")
 }
 
 func chartURL(base, symbol, date, clock, signal string) string {

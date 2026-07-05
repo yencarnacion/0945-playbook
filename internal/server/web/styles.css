@@ -88,7 +88,8 @@ body {
   align-items: center;
 }
 
-input[type="search"] {
+input[type="search"],
+input[type="time"] {
   width: 112px;
   height: 32px;
   padding: 0 9px;
@@ -97,6 +98,10 @@ input[type="search"] {
   border: 1px solid var(--line);
   border-radius: 6px;
   outline: none;
+}
+
+input[type="time"] {
+  width: 84px;
 }
 
 .segments {
@@ -114,8 +119,12 @@ input[type="search"] {
   gap: 4px;
 }
 
-.history-controls button {
+.history-controls button,
+.history-controls input {
   height: 30px;
+}
+
+.history-controls button {
   color: var(--text);
   background: #0b1016;
   border: 1px solid var(--line);
@@ -124,10 +133,30 @@ input[type="search"] {
   font-weight: 800;
 }
 
-.history-controls button:disabled {
+.history-controls button:disabled,
+.history-controls input:disabled {
   color: #566170;
   cursor: default;
   opacity: 0.55;
+}
+
+#replayTime,
+#replayGo {
+  display: none;
+}
+
+body.replay-mode #pause,
+body.replay-mode #live {
+  display: none;
+}
+
+body.replay-mode #replayTime,
+body.replay-mode #replayGo {
+  display: block;
+}
+
+body.replay-mode .history-controls {
+  grid-template-columns: 34px 34px 84px 42px;
 }
 
 .history-status {
@@ -442,6 +471,10 @@ canvas {
 
   .history-controls {
     grid-template-columns: repeat(4, 1fr);
+  }
+
+  body.replay-mode .history-controls {
+    grid-template-columns: 1fr 1fr minmax(84px, 1.5fr) 1fr;
   }
 
   .history-status {

@@ -35,9 +35,60 @@ func TestEvaluateExtremeUpperFadeSignal(t *testing.T) {
 	}
 }
 
+func TestEvaluateKeepsGeneratingSignalsAfter0946(t *testing.T) {
+	loc := mustNY(t)
+	set := SettingsFromConfig(config.Defaults())
+	set.ChartDate = "2026-07-02"
+	item := watchlist.Item{Symbol: "TEST", Order: 0}
+	bars := first15Bars(loc, 10, 10.2, 9.8, 50000)
+	bars = append(bars,
+		bar(loc, 9, 45, 10.0, 10.40, 10.00, 10.10, 10000),
+		bar(loc, 9, 46, 10.1, 10.45, 10.05, 10.15, 10000),
+		bar(loc, 9, 47, 10.15, 10.70, 10.25, 10.30, 10000),
+	)
+
+	evAt946 := Evaluate(item, bars, at(loc, 9, 46), loc, set, nil)
+	if evAt946.Signal {
+		t.Fatalf("did not expect signal at 09:46, got branch=%q ratio=%.4f", evAt946.Branch, evAt946.Ratio)
+	}
+
+	ev := Evaluate(item, bars, at(loc, 9, 47), loc, set, nil)
+
+	if !ev.Signal {
+		t.Fatalf("expected signal after 09:46, got status=%s reason=%s ratio=%.4f", ev.Status, ev.Reason, ev.Ratio)
+	}
+	if ev.Branch != "B1 VWAP FADE" {
+		t.Fatalf("branch = %q, want B1 VWAP FADE", ev.Branch)
+	}
+	if ev.Entry != 10.30 {
+		t.Fatalf("entry = %.2f, want 10.30", ev.Entry)
+	}
+	if ev.Avg15 != 10 {
+		t.Fatalf("avg15 = %.4f, want fixed first-15 average 10.0000", ev.Avg15)
+	}
+	if ev.Ratio < 1.029 || ev.Ratio > 1.031 {
+		t.Fatalf("ratio = %.4f, want close/avg15 around 1.0300", ev.Ratio)
+	}
+	if ev.DayHigh != 10.70 {
+		t.Fatalf("day high = %.2f, want updated HOD 10.70", ev.DayHigh)
+	}
+	if ev.VWAP <= 0 || ev.VWAP >= ev.Entry {
+		t.Fatalf("vwap = %.4f, want updated VWAP below entry %.2f", ev.VWAP, ev.Entry)
+	}
+	if ev.HODRiskPct < set.ModUpperMinHODRiskPct {
+		t.Fatalf("HOD risk = %.4f, want at least %.4f", ev.HODRiskPct, set.ModUpperMinHODRiskPct)
+	}
+
+	wantURL := "http://localhost:8081/api/open-chart/TEST/2026-07-02/0947?resolution=1m&signal=sell"
+	if ev.ChartURL != wantURL {
+		t.Fatalf("chart URL = %q, want %q", ev.ChartURL, wantURL)
+	}
+}
+
 func TestEvaluateLikelyUpperBefore0945(t *testing.T) {
 	loc := mustNY(t)
 	set := SettingsFromConfig(config.Defaults())
+	set.ChartDate = "2026-07-02"
 	item := watchlist.Item{Symbol: "TEST", Order: 0}
 	bars := first15Bars(loc, 10, 10.1, 9.9, 50000)[:11]
 	bars = append(bars, bar(loc, 9, 41, 10.0, 10.35, 10.0, 10.30, 50000))
@@ -59,13 +110,17 @@ func TestEvaluateLikelyUpperBefore0945(t *testing.T) {
 	if ev.ORBSource != "live 15m estimate" {
 		t.Fatalf("ORB source = %q, want live 15m estimate", ev.ORBSource)
 	}
+	wantURL := "http://localhost:8081/api/open-chart/TEST/2026-07-02/0941?resolution=1m&signal=sell"
+	if ev.ChartURL != wantURL {
+		t.Fatalf("chart URL = %q, want %q", ev.ChartURL, wantURL)
+	}
 }
 
 func TestEvaluateReplayChartURLIncludesDateTimeAndSignalSide(t *testing.T) {
 	loc := mustNY(t)
 	set := SettingsFromConfig(config.Defaults())
 	set.ChartDate = "2026-07-02"
-	set.ChartTime = "0945"
+	set.ChartTime = "0933"
 	item := watchlist.Item{Symbol: "AVAV", Order: 0}
 	bars := first15Bars(loc, 10, 10.2, 9.8, 50000)
 	bars = append(bars, bar(loc, 9, 45, 10.0, 10.65, 10.55, 10.60, 80000))

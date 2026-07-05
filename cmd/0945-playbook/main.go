@@ -42,7 +42,7 @@ func run() error {
 	addr := fs.String("addr", "", "HTTP listen address override")
 	date := fs.String("date", "", "YYYY-MM-DD for download/replay")
 	start := fs.String("start", "", "HH:MM replay start")
-	speed := fs.Float64("speed", 0, "replay speed multiplier")
+	speed := fs.Float64("speed", 0, "demo speed multiplier")
 	maxSymbols := fs.Int("max", 0, "max symbols override")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -111,7 +111,7 @@ func run() error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%s replay dashboard: http://localhost%s (%s from %s at %.2fx)\n", projectName, displayAddr(cfg.App.Addr), day, replayStart, cfg.Replay.Speed)
+		fmt.Printf("%s replay dashboard: http://localhost%s (%s selected %s)\n", projectName, displayAddr(cfg.App.Addr), day, replayStart)
 		return server.Serve(ctx, cfg.App.Addr, r)
 
 	case "demo":

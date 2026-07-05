@@ -10,6 +10,7 @@ const state = {
   followLive: true,
   lastSignature: '',
   livePayload: null,
+  isReplay: false,
 };
 
 const el = {
@@ -25,6 +26,8 @@ const el = {
   back: document.getElementById('back'),
   pause: document.getElementById('pause'),
   forward: document.getElementById('forward'),
+  replayTime: document.getElementById('replayTime'),
+  replayGo: document.getElementById('replayGo'),
   live: document.getElementById('live'),
   historyStatus: document.getElementById('historyStatus'),
 };
@@ -43,6 +46,10 @@ el.filter.addEventListener('click', (event) => {
 });
 
 el.back.addEventListener('click', () => {
+  if (state.isReplay) {
+    replayStep(-1);
+    return;
+  }
   if (state.history.length === 0) return;
   state.followLive = false;
   state.selectedIndex = clampIndex(state.selectedIndex < 0 ? state.history.length - 1 : state.selectedIndex);
@@ -51,6 +58,7 @@ el.back.addEventListener('click', () => {
 });
 
 el.pause.addEventListener('click', () => {
+  if (state.isReplay) return;
   if (state.history.length === 0) return;
   state.followLive = false;
   state.selectedIndex = clampIndex(state.selectedIndex < 0 ? state.history.length - 1 : state.selectedIndex);
@@ -58,6 +66,10 @@ el.pause.addEventListener('click', () => {
 });
 
 el.forward.addEventListener('click', () => {
+  if (state.isReplay) {
+    replayStep(1);
+    return;
+  }
   if (state.history.length === 0) return;
   state.followLive = false;
   state.selectedIndex = clampIndex(state.selectedIndex < 0 ? state.history.length - 1 : state.selectedIndex);
@@ -65,7 +77,18 @@ el.forward.addEventListener('click', () => {
   useSelectedSnapshot();
 });
 
+el.replayGo.addEventListener('click', () => {
+  replaySeek(el.replayTime.value);
+});
+
+el.replayTime.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  replaySeek(el.replayTime.value);
+});
+
 el.live.addEventListener('click', () => {
+  if (state.isReplay) return;
   state.followLive = true;
   state.selectedIndex = state.history.length - 1;
   if (state.livePayload) applyPayload(state.livePayload);
@@ -75,6 +98,11 @@ async function refresh() {
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     const payload = await response.json();
+    if (payload.mode === 'replay') {
+      state.livePayload = payload;
+      applyPayload(payload);
+      return;
+    }
     state.livePayload = payload;
     addHistorySnapshot(payload);
     if (state.followLive) {
@@ -88,12 +116,51 @@ async function refresh() {
   }
 }
 
+async function replaySeek(clock) {
+  if (!clock) return;
+  await replayControl('/api/replay/seek', { clock });
+}
+
+async function replayStep(minutes) {
+  await replayControl('/api/replay/step', { minutes });
+}
+
+async function replayControl(url, body) {
+  try {
+    setReplayBusy(true);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const payload = await response.json();
+    state.livePayload = payload;
+    applyPayload(payload);
+  } catch (error) {
+    el.historyStatus.textContent = 'Replay control failed';
+  } finally {
+    setReplayBusy(false);
+  }
+}
+
+function setReplayBusy(busy) {
+  if (!state.isReplay) return;
+  el.back.disabled = busy;
+  el.forward.disabled = busy;
+  el.replayGo.disabled = busy;
+  el.replayTime.disabled = busy;
+}
+
 function applyPayload(payload) {
+  state.isReplay = payload.mode === 'replay';
   state.rows = payload.rows || [];
   state.volumeFilter = Number(payload.volume_filter || 0);
+  document.body.classList.toggle('replay-mode', state.isReplay);
   el.project.textContent = payload.project || '0945-playbook';
   el.mode.textContent = payload.mode || 'mode';
   el.clock.textContent = payload.clock || '--:--:--';
+  updateReplayInput(payload);
   updateUpdatedText(payload);
   renderStats(payload.stats || {});
   updateHistoryStatus();
@@ -160,6 +227,10 @@ function snapshotSignature(snapshot) {
 }
 
 function updateUpdatedText(payload) {
+  if (state.isReplay) {
+    el.updated.textContent = `selected ${payload.clock || '--:--:--'}`;
+    return;
+  }
   const viewText = payload.updated ? new Date(payload.updated).toLocaleTimeString() : 'waiting';
   if (state.followLive || !state.livePayload) {
     el.updated.textContent = `updated ${viewText}`;
@@ -169,6 +240,16 @@ function updateUpdatedText(payload) {
 }
 
 function updateHistoryStatus() {
+  if (state.isReplay) {
+    el.historyStatus.textContent = `Replay ${state.livePayload ? state.livePayload.clock : el.clock.textContent}`;
+    el.back.disabled = false;
+    el.forward.disabled = false;
+    el.pause.disabled = true;
+    el.live.disabled = true;
+    el.replayTime.disabled = false;
+    el.replayGo.disabled = false;
+    return;
+  }
   const total = state.history.length;
   const current = state.selectedIndex >= 0 ? state.selectedIndex + 1 : total;
   if (state.followLive) {
@@ -182,6 +263,15 @@ function updateHistoryStatus() {
   el.forward.disabled = total <= 1 || clampIndex(state.selectedIndex) >= total - 1;
   el.pause.disabled = total === 0 || !state.followLive;
   el.live.disabled = state.followLive;
+  el.replayTime.disabled = true;
+  el.replayGo.disabled = true;
+}
+
+function updateReplayInput(payload) {
+  if (!state.isReplay || document.activeElement === el.replayTime) return;
+  const clock = String(payload.clock || '');
+  const match = clock.match(/^(\d{2}:\d{2})/);
+  if (match) el.replayTime.value = match[1];
 }
 
 function clampIndex(index) {
@@ -388,4 +478,6 @@ function escapeHTML(value) {
 }
 
 refresh();
-state.timer = setInterval(refresh, 1000);
+state.timer = setInterval(() => {
+  if (!state.isReplay) refresh();
+}, 1000);
