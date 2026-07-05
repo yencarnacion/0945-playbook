@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>0945-playbook</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="identity">
+        <div class="project" id="project">0945-playbook</div>
+        <div class="subline"><span id="mode">mode</span><span id="clock">--:--:--</span><span id="updated">waiting</span></div>
+      </div>
+      <div class="stats" id="stats"></div>
+      <div class="controls">
+        <input id="search" type="search" placeholder="Ticker">
+        <div class="history-controls">
+          <button id="back" title="Previous signal snapshot" aria-label="Previous signal snapshot">←</button>
+          <button id="pause" title="Pause displayed snapshot" aria-label="Pause displayed snapshot">Ⅱ</button>
+          <button id="forward" title="Next signal snapshot" aria-label="Next signal snapshot">→</button>
+          <button id="live" title="Jump to live" aria-label="Jump to live">LIVE</button>
+        </div>
+        <div class="history-status" id="historyStatus">Live</div>
+        <div class="segments" id="filter">
+          <button data-filter="relevant" class="active">Relevant</button>
+          <button data-filter="likely">Likely</button>
+          <button data-filter="signal">Signals</button>
+          <button data-filter="active">Active</button>
+          <button data-filter="done">Done</button>
+          <button data-filter="problem">Problems</button>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="strip" id="strip"></section>
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="sym">Symbol</th>
+              <th>Status</th>
+              <th>EV</th>
+              <th>Action</th>
+              <th>Branch</th>
+              <th>C/Avg15</th>
+              <th>Delta</th>
+              <th>Price</th>
+              <th>Avg15</th>
+              <th>Vol15</th>
+              <th>VWAP Gap</th>
+              <th>HOD Risk</th>
+              <th>Dist</th>
+              <th>Shares</th>
+              <th>Entry</th>
+              <th>TP</th>
+              <th>Stop</th>
+              <th class="spark">Chart</th>
+              <th class="note">Note</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

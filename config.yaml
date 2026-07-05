@@ -1,0 +1,80 @@
+app:
+  name: 0945-playbook
+  addr: ":8080"
+  timezone: America/New_York
+
+massive:
+  api_key_env: MASSIVE_API_KEY
+  source_multiplier: 5
+  source_timespan: second
+  adjusted: true
+  request_timeout: 20s
+  concurrent_requests: 8
+
+scan:
+  watchlist_path: 1000-company-filter.csv
+  max_symbols: 0
+  min_first15_volume_filter: 400000
+  poll_interval: 10s
+  data_dir: data
+  chart_base_url: http://localhost:8081
+
+session:
+  open: "09:30"
+  close: "16:00"
+
+signal:
+  entry_minutes_after_open: 15
+  avg_close_bars: 15
+  min_entry_price: 1.00
+  min_first15_vol: 500000
+  min_first15_dollar_vol: 0
+  upper_signal_ratio: 1.02
+  lower_signal_ratio: 0.98
+
+risk:
+  risk_dollars: 1000
+  share_lot_size: 1
+  max_shares: 1000000
+  min_risk_per_share: 0.01
+  use_time_exit: true
+  time_exit_window: "15:59-16:00"
+
+orb:
+  lookback_sessions: 5
+  orb_minutes: 30
+  target_stop_multiplier: 0.5
+  require_full_lookback: false
+  use_first15_fallback_if_no_orb: true
+
+branch:
+  moderate_upper_vwap_fade:
+    min_signal: 1.02
+    max_signal: 1.05
+    min_vwap_reward_pct: 0.02
+    min_hod_risk_pct: 0.02
+    max_hod_risk_pct: 0.08
+  extreme_upper_hard_stop_fade:
+    min_signal: 1.05
+    min_price: 5
+    max_price: 100
+  mid_priced_upper_long:
+    min_price: 5
+    max_price: 20
+    min_distance_pct: 0.03
+    max_distance_pct: 0.08
+    max_signal: 1.05
+  lower_hod_stop_short:
+    min_target_pct: 0.02
+    max_target_pct: 0.10
+    min_hod_risk_pct: 0.08
+    max_hod_risk_pct: 0.16
+    priority_signal_ratio: 0.96
+  lower_one_to_one_orb_fallback:
+    min_distance_pct: 0.05
+    max_distance_pct: 0.12
+
+replay:
+  default_date: ""
+  default_start: "09:30"
+  speed: 1

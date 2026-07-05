@@ -1,0 +1,14 @@
+# Secrets and local overrides
+.env
+.env.*
+!.env.example
+
+# Downloaded market/replay data
+/data/
+/data-*/
+*.cache
+
+# Build and runtime artifacts
+/dist/
+*.log
+/0945-playbook
