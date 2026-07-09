@@ -1,6 +1,6 @@
 # 0945-playbook
 
-A compact Go dashboard for the 09:45 first-15 playbook. It scans a CSV watchlist, computes the TradingView-style first-15 average close signal, applies the B1-B5 branch rules, and serves a stable real-time dashboard for likely setups and actual signals.
+A compact Go dashboard for the 09:45 playbook. It scans a CSV watchlist, computes a TC2000-style rolling `C/AVGC15` signal, applies the B1-B5 branch rules, and serves a stable real-time dashboard for likely setups and actual signals.
 
 ## Setup
 
@@ -33,8 +33,8 @@ Live mode polls Massive aggregate bars using the official Go client dependency. 
 
 ## Notes
 
-- The default source is 5-second bars reduced into one-minute candles so the first-15 signal matches the Pine logic while keeping the feed lighter than 1-second bars.
-- Live mode anchors intraday indicators at the regular-session open. Starting after 09:30 backfills from 09:30, then each poll merges newer bars into the in-memory RTH buffer used for HOD, LOD, VWAP, and `C/Avg15`.
+- The default source is 5-second bars reduced into one-minute candles so the rolling `C/AVGC15` signal stays close to TC2000 while keeping the feed lighter than 1-second bars.
+- Live mode anchors intraday indicators at the regular-session open. Starting after 09:30 backfills from 09:30, then each poll merges newer bars into the in-memory RTH buffer used for HOD, LOD, VWAP, first-15 volume/range filters, and rolling `C/Avg15`.
 - `scan.max_symbols: 0` means use the entire CSV watchlist, regardless of the file name.
 - `scan.min_first15_volume_filter` controls the dashboard volume filter; default is `400000`.
 - Replay is manually controlled from the dashboard. Use the arrow buttons to step one minute at a time, or enter a specific time to hold that replay timestamp.

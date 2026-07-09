@@ -63,11 +63,11 @@ func TestEvaluateKeepsGeneratingSignalsAfter0946(t *testing.T) {
 	if ev.Entry != 10.30 {
 		t.Fatalf("entry = %.2f, want 10.30", ev.Entry)
 	}
-	if ev.Avg15 != 10 {
-		t.Fatalf("avg15 = %.4f, want fixed first-15 average 10.0000", ev.Avg15)
+	if ev.Avg15 < 10.036 || ev.Avg15 > 10.037 {
+		t.Fatalf("avg15 = %.4f, want rolling 15-bar average around 10.0367", ev.Avg15)
 	}
-	if ev.Ratio < 1.029 || ev.Ratio > 1.031 {
-		t.Fatalf("ratio = %.4f, want close/avg15 around 1.0300", ev.Ratio)
+	if ev.Ratio < 1.026 || ev.Ratio > 1.027 {
+		t.Fatalf("ratio = %.4f, want close/rolling avg15 around 1.0263", ev.Ratio)
 	}
 	if ev.DayHigh != 10.70 {
 		t.Fatalf("day high = %.2f, want updated HOD 10.70", ev.DayHigh)
@@ -166,6 +166,26 @@ func TestEvaluateRTHIndicatorsIgnorePremarket(t *testing.T) {
 	}
 	if ev.First15Bars != 2 {
 		t.Fatalf("first15 bars = %d, want 2 RTH bars", ev.First15Bars)
+	}
+}
+
+func TestEvaluateUsesRollingAvg15ForLateDayRatio(t *testing.T) {
+	loc := mustNY(t)
+	set := SettingsFromConfig(config.Defaults())
+	item := watchlist.Item{Symbol: "TEST", Order: 0}
+	bars := first15Bars(loc, 10, 10.2, 9.8, 50000)
+
+	for i := 0; i < 15; i++ {
+		bars = append(bars, bar(loc, 15, 21+i, 11, 11.1, 10.9, 11, 10000))
+	}
+
+	ev := Evaluate(item, bars, at(loc, 15, 35), loc, set, nil)
+
+	if ev.Avg15 != 11 {
+		t.Fatalf("avg15 = %.4f, want rolling late-day average 11.0000", ev.Avg15)
+	}
+	if ev.Ratio != 1 {
+		t.Fatalf("ratio = %.4f, want close/rolling avg15 to be 1.0000", ev.Ratio)
 	}
 }
 

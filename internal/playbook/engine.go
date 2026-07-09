@@ -139,6 +139,8 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 	var first15High float64
 	var first15Low float64
 	var first15BarCount int
+	var rollingCloseSum float64
+	var rollingCloses []float64
 	var cumPV float64
 	var cumVol float64
 	var orbHigh float64
@@ -164,6 +166,13 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 		lastBar = bar
 		lastMinutesAfterOpen = minutesAfterOpen
 		lastInRTH = true
+
+		rollingCloses = append(rollingCloses, bar.Close)
+		rollingCloseSum += bar.Close
+		if len(rollingCloses) > s.AvgCloseBars {
+			rollingCloseSum -= rollingCloses[0]
+			rollingCloses = rollingCloses[1:]
+		}
 
 		if dayHigh == 0 || bar.High > dayHigh {
 			dayHigh = bar.High
@@ -202,7 +211,8 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 		}
 
 		if minutesAfterOpen >= s.EntryMinutesAfterOpen && !state.taken && !state.active {
-			evaluateEntry(&state, bar, idx, first15CloseSum, first15BarCount, first15Vol, first15DollarVol, dayHigh, cumPV, cumVol, first15High, first15Low, s, priorORBRanges)
+			rollingAvgClose := safeDiv(rollingCloseSum, float64(len(rollingCloses)))
+			evaluateEntry(&state, bar, idx, rollingAvgClose, first15BarCount, first15Vol, first15DollarVol, dayHigh, cumPV, cumVol, first15High, first15Low, s, priorORBRanges)
 		}
 
 		if state.active && idx > state.entryBarIndex {
@@ -242,12 +252,7 @@ func Evaluate(item watchlist.Item, bars []data.Bar, now time.Time, loc *time.Loc
 	}
 
 	first15Complete := first15BarCount >= s.AvgCloseBars
-	var avg15 float64
-	if first15Complete {
-		avg15 = first15CloseSum / float64(s.AvgCloseBars)
-	} else if first15BarCount > 0 {
-		avg15 = first15CloseSum / float64(first15BarCount)
-	}
+	avg15 := safeDiv(rollingCloseSum, float64(len(rollingCloses)))
 
 	targetStopDistance, orbSource, lookbackOK := targetStopDistance(first15Complete, first15High, first15Low, s, priorORBRanges)
 	price := lastBar.Close
@@ -440,10 +445,9 @@ func estimateBranch(price float64, signalRatio float64, rthVWAP float64, dayHigh
 	return "EST WATCH", 0, 0, 0
 }
 
-func evaluateEntry(state *tradeState, bar data.Bar, idx int, first15CloseSum float64, first15BarCount int, first15Vol float64, first15DollarVol float64, dayHigh float64, cumPV float64, cumVol float64, first15High float64, first15Low float64, s Settings, priorORBRanges []float64) {
+func evaluateEntry(state *tradeState, bar data.Bar, idx int, avg15 float64, first15BarCount int, first15Vol float64, first15DollarVol float64, dayHigh float64, cumPV float64, cumVol float64, first15High float64, first15Low float64, s Settings, priorORBRanges []float64) {
 	first15Complete := first15BarCount >= s.AvgCloseBars
-	first15AvgCloseFinal := safeDiv(first15CloseSum, float64(s.AvgCloseBars))
-	signalRatio := safeDiv(bar.Close, first15AvgCloseFinal)
+	signalRatio := safeDiv(bar.Close, avg15)
 	targetStopDistance, _, lookbackOK := targetStopDistance(first15Complete, first15High, first15Low, s, priorORBRanges)
 	rthVWAP := safeDiv(cumPV, cumVol)
 	distancePct := safeDiv(targetStopDistance, bar.Close)
