@@ -11,6 +11,15 @@ const state = {
   lastSignature: '',
   livePayload: null,
   isReplay: false,
+  view: 'playbook',
+  extended: null,
+  extendedQuery: '',
+  extendedFollowLive: true,
+  extendedSelectedID: 0,
+  extendedSymbols: null,
+  soundEnabled: false,
+  soundMuted: false,
+  sound: null,
 };
 
 const el = {
@@ -30,7 +39,62 @@ const el = {
   replayGo: document.getElementById('replayGo'),
   live: document.getElementById('live'),
   historyStatus: document.getElementById('historyStatus'),
+  playbookControls: document.getElementById('playbookControls'),
+  extendedControls: document.getElementById('extendedControls'),
+  playbookView: document.getElementById('playbookView'),
+  extendedView: document.getElementById('extendedView'),
+  extendedTab: document.getElementById('extendedTab'),
+  extendedRows: document.getElementById('extendedRows'),
+  extendedSummary: document.getElementById('extendedSummary'),
+  extendedSearch: document.getElementById('extendedSearch'),
+  extendedBack: document.getElementById('extendedBack'),
+  extendedPrevHit: document.getElementById('extendedPrevHit'),
+  extendedNextHit: document.getElementById('extendedNextHit'),
+  extendedForward: document.getElementById('extendedForward'),
+  extendedLive: document.getElementById('extendedLive'),
+  extendedStatus: document.getElementById('extendedStatus'),
+  soundToggle: document.getElementById('soundToggle'),
+  soundMute: document.getElementById('soundMute'),
+  extendedRatioHeading: document.getElementById('extendedRatioHeading'),
+  extendedAverageHeading: document.getElementById('extendedAverageHeading'),
 };
+
+document.querySelector('.view-tabs').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-view]');
+  if (!button || button.hidden) return;
+  selectView(button.dataset.view);
+});
+
+el.extendedSearch.addEventListener('input', () => {
+  state.extendedQuery = el.extendedSearch.value.trim().toUpperCase();
+  renderExtended();
+});
+
+el.extendedBack.addEventListener('click', () => moveExtended(-1, false));
+el.extendedForward.addEventListener('click', () => moveExtended(1, false));
+el.extendedPrevHit.addEventListener('click', () => moveExtended(-1, true));
+el.extendedNextHit.addEventListener('click', () => moveExtended(1, true));
+el.extendedLive.addEventListener('click', async () => {
+  state.extendedFollowLive = true;
+  state.extendedSelectedID = 0;
+  await refreshExtended();
+});
+
+el.soundToggle.addEventListener('click', () => {
+  state.soundEnabled = !state.soundEnabled;
+  if (state.soundEnabled && state.extended && !state.sound) {
+    state.sound = new Audio(state.extended.sound_url || '/api/extended/sound');
+    state.sound.preload = 'auto';
+    state.sound.load();
+  }
+  updateSoundControls();
+});
+
+el.soundMute.addEventListener('click', () => {
+  state.soundMuted = !state.soundMuted;
+  if (state.sound) state.sound.muted = state.soundMuted;
+  updateSoundControls();
+});
 
 el.search.addEventListener('input', () => {
   state.query = el.search.value.trim().toUpperCase();
@@ -111,6 +175,7 @@ async function refresh() {
     } else {
       updateHistoryStatus();
     }
+    await refreshExtended();
   } catch (error) {
     el.updated.textContent = `offline ${new Date().toLocaleTimeString()}`;
   }
@@ -154,9 +219,12 @@ function setReplayBusy(busy) {
 
 function applyPayload(payload) {
   state.isReplay = payload.mode === 'replay';
+  const extendedAvailable = payload.mode === 'live';
   state.rows = payload.rows || [];
   state.volumeFilter = Number(payload.volume_filter || 0);
   document.body.classList.toggle('replay-mode', state.isReplay);
+  el.extendedTab.hidden = !extendedAvailable;
+  if (!extendedAvailable && state.view === 'extended') selectView('playbook');
   el.project.textContent = payload.project || '0945-playbook';
   el.mode.textContent = payload.mode || 'mode';
   el.clock.textContent = payload.clock || '--:--:--';
@@ -165,6 +233,145 @@ function applyPayload(payload) {
   renderStats(payload.stats || {});
   updateHistoryStatus();
   render();
+}
+
+function selectView(view) {
+  if (view === 'extended' && state.isReplay) return;
+  state.view = view;
+  const extended = view === 'extended';
+  document.body.classList.toggle('extended-mode', extended);
+  el.playbookView.hidden = extended;
+  el.playbookControls.hidden = extended;
+  el.extendedView.hidden = !extended;
+  el.extendedControls.hidden = !extended;
+  for (const button of document.querySelectorAll('.view-tabs button[data-view]')) {
+    button.classList.toggle('active', button.dataset.view === view);
+  }
+  if (extended) {
+    renderExtended();
+    updateExtendedStatus();
+  } else if (state.livePayload) {
+    renderStats(state.livePayload.stats || {});
+  }
+}
+
+async function refreshExtended(selectedID = 0) {
+  if (!state.livePayload || state.livePayload.mode !== 'live') return;
+  const requestedID = selectedID || (!state.extendedFollowLive ? state.extendedSelectedID : 0);
+  try {
+    const response = await fetch('/api/extended', { cache: 'no-store' });
+    if (!response.ok) return;
+    const latest = await response.json();
+    detectExtendedAdditions(latest.selected && latest.selected.rows || []);
+    let payload = latest;
+    if (requestedID && requestedID !== latest.live_id) {
+      const selectedResponse = await fetch(`/api/extended?minute=${encodeURIComponent(requestedID)}`, { cache: 'no-store' });
+      if (selectedResponse.ok) payload = await selectedResponse.json();
+    }
+    state.extended = payload;
+    if (!state.extendedFollowLive && payload.selected && payload.selected.id) {
+      state.extendedSelectedID = payload.selected.id;
+    }
+    if (state.extendedFollowLive) state.extendedSelectedID = payload.live_id || 0;
+    if (state.view === 'extended') renderExtended();
+    updateExtendedStatus();
+  } catch (_) {
+    if (state.view === 'extended') el.extendedStatus.textContent = 'Extended scan unavailable';
+  }
+}
+
+function detectExtendedAdditions(rows) {
+  const next = new Set(rows.map((row) => row.symbol));
+  if (state.extendedSymbols !== null && state.soundEnabled && !state.soundMuted) {
+    const additions = [...next].filter((symbol) => !state.extendedSymbols.has(symbol));
+    if (additions.length) playAlertSound();
+  }
+  state.extendedSymbols = next;
+}
+
+function playAlertSound() {
+  if (!state.sound && state.extended) state.sound = new Audio(state.extended.sound_url || '/api/extended/sound');
+  if (!state.sound) return;
+  state.sound.currentTime = 0;
+  state.sound.muted = state.soundMuted;
+  state.sound.play().catch(() => {
+    el.extendedStatus.textContent = 'Click Start sound again to allow browser audio';
+  });
+}
+
+async function moveExtended(direction, hitsOnly) {
+  const history = state.extended && state.extended.history || [];
+  if (!history.length) return;
+  let index = history.findIndex((point) => point.id === state.extendedSelectedID);
+  if (index < 0) index = history.length - 1;
+  do {
+    index += direction;
+  } while (hitsOnly && index >= 0 && index < history.length && !history[index].count);
+  if (index < 0 || index >= history.length) return;
+  state.extendedFollowLive = false;
+  state.extendedSelectedID = history[index].id;
+  await refreshExtended(history[index].id);
+}
+
+function renderExtended() {
+  const payload = state.extended;
+  if (!payload) {
+    el.extendedRows.innerHTML = '';
+    el.extendedSummary.textContent = 'Waiting for the first extended-hours scan.';
+    return;
+  }
+  const n = Number(payload.avg_close_bars || 15);
+  el.extendedRatioHeading.textContent = `C/Avg${n}`;
+  el.extendedAverageHeading.textContent = `Avg${n}`;
+  const snapshot = payload.selected || {};
+  const rows = (snapshot.rows || []).filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
+  el.extendedSummary.innerHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
+    <span>C/Avg${n} &lt; ${Number(payload.lower_signal_ratio).toFixed(2)} or &gt; ${Number(payload.upper_signal_ratio).toFixed(2)}</span>
+    <span>${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET</span>`;
+  el.extendedRows.innerHTML = rows.map((row) => {
+    const sideClass = row.side < 0 ? 'side-short' : 'side-long';
+    const deltaClass = row.delta_pct > 0 ? 'pos' : 'neg';
+    const signal = row.side < 0 ? 'LOW' : 'HIGH';
+    return `<tr class="${sideClass}">
+      <td class="sym"><a href="${row.chart_url}" target="_blank" rel="noreferrer">${escapeHTML(row.symbol)}</a><div>${escapeHTML(shortName(row.name))}</div></td>
+      <td><span class="pill">${signal}</span></td>
+      <td>${Number(row.ratio || 0).toFixed(4)}</td>
+      <td class="${deltaClass}">${pct(row.delta_pct)}</td>
+      <td>${money(row.price)}</td>
+      <td>${money(row.average)}</td>
+      <td>${escapeHTML(row.clock)}</td>
+      <td class="note">${escapeHTML(row.industry)}</td>
+    </tr>`;
+  }).join('');
+  if (state.view === 'extended') {
+    el.stats.innerHTML = `<div class="stat"><strong>${snapshot.rows ? snapshot.rows.length : 0}</strong><span>Matches</span></div>
+      <div class="stat"><strong>${n}</strong><span>Avg bars</span></div>`;
+  }
+}
+
+function updateExtendedStatus() {
+  const payload = state.extended;
+  if (!payload || !payload.history || !payload.history.length) {
+    el.extendedStatus.textContent = 'Waiting for live data in the configured window';
+    return;
+  }
+  const history = payload.history;
+  const selected = payload.selected || {};
+  const index = history.findIndex((point) => point.id === selected.id);
+  el.extendedStatus.textContent = state.extendedFollowLive
+    ? `Live ${selected.clock || ''} · ${history.length} minutes stored`
+    : `Viewing ${selected.clock || ''} · ${index + 1}/${history.length}`;
+  el.extendedBack.disabled = index <= 0;
+  el.extendedPrevHit.disabled = !history.slice(0, Math.max(index, 0)).some((point) => point.count);
+  el.extendedForward.disabled = index < 0 || index >= history.length - 1;
+  el.extendedNextHit.disabled = index < 0 || !history.slice(index + 1).some((point) => point.count);
+  el.extendedLive.disabled = state.extendedFollowLive;
+}
+
+function updateSoundControls() {
+  el.soundToggle.textContent = state.soundEnabled ? 'Stop sound' : 'Start sound';
+  el.soundMute.disabled = !state.soundEnabled;
+  el.soundMute.textContent = state.soundMuted ? 'Unmute' : 'Mute';
 }
 
 function useSelectedSnapshot() {

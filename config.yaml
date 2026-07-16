@@ -19,6 +19,15 @@ scan:
   data_dir: data
   chart_base_url: http://localhost:8081
 
+extended_scan:
+  start: "04:00"
+  end: "20:00"
+  avg_close_bars: 15
+  upper_signal_ratio: 1.02
+  lower_signal_ratio: 0.98
+  sound_dir: sounds
+  sound_file: hey.mp3
+
 session:
   open: "09:30"
   close: "16:00"

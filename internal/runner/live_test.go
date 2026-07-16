@@ -11,8 +11,8 @@ func TestLiveFetchStartBackfillsFromOpenWhenCacheEmpty(t *testing.T) {
 	loc := mustNY(t)
 	now := time.Date(2026, 7, 2, 10, 15, 0, 0, loc)
 
-	got := liveFetchStart(now, loc, "09:30", nil)
 	want := time.Date(2026, 7, 2, 9, 30, 0, 0, loc)
+	got := liveFetchStart(now, want, nil)
 
 	if !got.Equal(want) {
 		t.Fatalf("fetch start = %s, want %s", got, want)
@@ -27,8 +27,9 @@ func TestLiveFetchStartRefetchesPreviousCachedMinute(t *testing.T) {
 		liveBar(loc, 9, 45, 11),
 	}
 
-	got := liveFetchStart(now, loc, "09:30", cached)
 	want := time.Date(2026, 7, 2, 9, 44, 0, 0, loc)
+	base := time.Date(2026, 7, 2, 9, 30, 0, 0, loc)
+	got := liveFetchStart(now, base, cached)
 
 	if !got.Equal(want) {
 		t.Fatalf("fetch start = %s, want %s", got, want)

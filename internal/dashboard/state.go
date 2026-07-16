@@ -29,6 +29,46 @@ type State struct {
 	Rows         []playbook.Evaluation `json:"rows"`
 }
 
+type ExtendedRow struct {
+	Symbol   string  `json:"symbol"`
+	Name     string  `json:"name"`
+	Industry string  `json:"industry"`
+	Order    int     `json:"order"`
+	Price    float64 `json:"price"`
+	Average  float64 `json:"average"`
+	Ratio    float64 `json:"ratio"`
+	DeltaPct float64 `json:"delta_pct"`
+	Side     int     `json:"side"`
+	Clock    string  `json:"clock"`
+	ChartURL string  `json:"chart_url"`
+}
+
+type ExtendedSnapshot struct {
+	ID      int64         `json:"id"`
+	Clock   string        `json:"clock"`
+	Updated string        `json:"updated"`
+	Rows    []ExtendedRow `json:"rows"`
+}
+
+type ExtendedHistoryPoint struct {
+	ID    int64  `json:"id"`
+	Clock string `json:"clock"`
+	Count int    `json:"count"`
+}
+
+type ExtendedState struct {
+	Available        bool                   `json:"available"`
+	WindowStart      string                 `json:"window_start"`
+	WindowEnd        string                 `json:"window_end"`
+	AvgCloseBars     int                    `json:"avg_close_bars"`
+	UpperSignalRatio float64                `json:"upper_signal_ratio"`
+	LowerSignalRatio float64                `json:"lower_signal_ratio"`
+	SoundURL         string                 `json:"sound_url"`
+	LiveID           int64                  `json:"live_id"`
+	Selected         ExtendedSnapshot       `json:"selected"`
+	History          []ExtendedHistoryPoint `json:"history"`
+}
+
 func Build(project, mode, clock, chartBaseURL string, volumeFilter float64, updated time.Time, rows []playbook.Evaluation) State {
 	out := make([]playbook.Evaluation, len(rows))
 	copy(out, rows)

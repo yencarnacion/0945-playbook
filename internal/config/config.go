@@ -12,15 +12,16 @@ import (
 )
 
 type Config struct {
-	App     AppConfig     `yaml:"app"`
-	Massive MassiveConfig `yaml:"massive"`
-	Scan    ScanConfig    `yaml:"scan"`
-	Session SessionConfig `yaml:"session"`
-	Signal  SignalConfig  `yaml:"signal"`
-	Risk    RiskConfig    `yaml:"risk"`
-	ORB     ORBConfig     `yaml:"orb"`
-	Branch  BranchConfig  `yaml:"branch"`
-	Replay  ReplayConfig  `yaml:"replay"`
+	App      AppConfig          `yaml:"app"`
+	Massive  MassiveConfig      `yaml:"massive"`
+	Scan     ScanConfig         `yaml:"scan"`
+	Extended ExtendedScanConfig `yaml:"extended_scan"`
+	Session  SessionConfig      `yaml:"session"`
+	Signal   SignalConfig       `yaml:"signal"`
+	Risk     RiskConfig         `yaml:"risk"`
+	ORB      ORBConfig          `yaml:"orb"`
+	Branch   BranchConfig       `yaml:"branch"`
+	Replay   ReplayConfig       `yaml:"replay"`
 }
 
 type AppConfig struct {
@@ -45,6 +46,16 @@ type ScanConfig struct {
 	PollInterval           string  `yaml:"poll_interval"`
 	DataDir                string  `yaml:"data_dir"`
 	ChartBaseURL           string  `yaml:"chart_base_url"`
+}
+
+type ExtendedScanConfig struct {
+	Start            string  `yaml:"start"`
+	End              string  `yaml:"end"`
+	AvgCloseBars     int     `yaml:"avg_close_bars"`
+	UpperSignalRatio float64 `yaml:"upper_signal_ratio"`
+	LowerSignalRatio float64 `yaml:"lower_signal_ratio"`
+	SoundDir         string  `yaml:"sound_dir"`
+	SoundFile        string  `yaml:"sound_file"`
 }
 
 type SessionConfig struct {
@@ -150,6 +161,15 @@ func Defaults() Config {
 			PollInterval:           "10s",
 			DataDir:                "data",
 			ChartBaseURL:           "http://localhost:8081",
+		},
+		Extended: ExtendedScanConfig{
+			Start:            "04:00",
+			End:              "20:00",
+			AvgCloseBars:     15,
+			UpperSignalRatio: 1.02,
+			LowerSignalRatio: 0.98,
+			SoundDir:         "sounds",
+			SoundFile:        "hey.mp3",
 		},
 		Session: SessionConfig{
 			Open:  "09:30",
@@ -270,6 +290,26 @@ func (c Config) Validate() error {
 	}
 	if _, err := time.ParseDuration(c.Massive.RequestTimeout); err != nil {
 		return fmt.Errorf("massive.request_timeout: %w", err)
+	}
+	extendedStart, err := time.Parse("15:04", c.Extended.Start)
+	if err != nil {
+		return fmt.Errorf("extended_scan.start: use HH:MM")
+	}
+	extendedEnd, err := time.Parse("15:04", c.Extended.End)
+	if err != nil {
+		return fmt.Errorf("extended_scan.end: use HH:MM")
+	}
+	if !extendedStart.Before(extendedEnd) {
+		return fmt.Errorf("extended_scan.start must be before extended_scan.end")
+	}
+	if c.Extended.AvgCloseBars < 1 {
+		return fmt.Errorf("extended_scan.avg_close_bars must be positive")
+	}
+	if c.Extended.LowerSignalRatio <= 0 || c.Extended.UpperSignalRatio <= c.Extended.LowerSignalRatio {
+		return fmt.Errorf("extended_scan signal ratios are invalid")
+	}
+	if strings.TrimSpace(c.Extended.SoundDir) == "" || strings.TrimSpace(c.Extended.SoundFile) == "" {
+		return fmt.Errorf("extended_scan.sound_dir and sound_file are required")
 	}
 	if c.Signal.EntryMinutesAfterOpen < 1 {
 		return fmt.Errorf("signal.entry_minutes_after_open must be positive")

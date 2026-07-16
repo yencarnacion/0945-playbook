@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -25,11 +26,13 @@ type LiveRunner struct {
 	set       playbook.Settings
 	chartDate string
 
-	mu           sync.RWMutex
-	rows         []playbook.Evaluation
-	barsBySymbol map[string][]data.Bar
-	updated      time.Time
-	scanning     bool
+	mu              sync.RWMutex
+	rows            []playbook.Evaluation
+	barsBySymbol    map[string][]data.Bar
+	updated         time.Time
+	scanning        bool
+	extendedStarted time.Time
+	extendedHistory []dashboard.ExtendedSnapshot
 }
 
 func NewLive(project string, cfg config.Config, loc *time.Location, items []watchlist.Item, prov data.Provider) *LiveRunner {
@@ -54,16 +57,17 @@ func NewLive(project string, cfg config.Config, loc *time.Location, items []watc
 		})
 	}
 	return &LiveRunner{
-		project:      project,
-		cfg:          cfg,
-		loc:          loc,
-		items:        items,
-		prov:         prov,
-		set:          set,
-		chartDate:    chartDate,
-		rows:         rows,
-		barsBySymbol: make(map[string][]data.Bar, len(items)),
-		updated:      time.Now(),
+		project:         project,
+		cfg:             cfg,
+		loc:             loc,
+		items:           items,
+		prov:            prov,
+		set:             set,
+		chartDate:       chartDate,
+		rows:            rows,
+		barsBySymbol:    make(map[string][]data.Bar, len(items)),
+		updated:         time.Now(),
+		extendedStarted: now,
 	}
 }
 
@@ -113,17 +117,21 @@ func (r *LiveRunner) scan(ctx context.Context) {
 	set.ChartDate = chartDate
 	set.ChartTime = chartClock(now)
 	open := sessionClock(now, r.loc, r.cfg.Session.Open)
-	closeTime := sessionClock(now, r.loc, r.cfg.Session.Close)
+	extendedOpen := sessionClock(now, r.loc, r.cfg.Extended.Start)
+	extendedClose := sessionClock(now, r.loc, r.cfg.Extended.End)
 
 	r.mu.Lock()
 	if chartDate != r.chartDate {
 		r.chartDate = chartDate
 		r.barsBySymbol = make(map[string][]data.Bar, len(r.items))
+		r.extendedStarted = now
+		r.extendedHistory = nil
 	}
 	cachedBySymbol := cloneBarsBySymbol(r.barsBySymbol)
+	extendedStarted := r.extendedStarted
 	r.mu.Unlock()
 
-	if now.Before(open) {
+	if now.Before(extendedOpen) {
 		rows := make([]playbook.Evaluation, len(r.items))
 		for i, item := range r.items {
 			rows[i] = waitEval(item, r.cfg, chartDate, set.ChartTime, "WAIT 09:30", "Regular session has not opened.")
@@ -133,6 +141,18 @@ func (r *LiveRunner) scan(ctx context.Context) {
 		r.updated = time.Now().In(r.loc)
 		r.mu.Unlock()
 		return
+	}
+	fetchEnd := now
+	if fetchEnd.After(extendedClose) {
+		fetchEnd = extendedClose
+	}
+	fetchBase := open
+	if now.Before(open) {
+		fetchBase = extendedOpen
+		startedMinute := extendedStarted.In(r.loc).Truncate(time.Minute)
+		if startedMinute.After(fetchBase) {
+			fetchBase = startedMinute
+		}
 	}
 
 	rows := make([]playbook.Evaluation, len(r.items))
@@ -153,15 +173,23 @@ func (r *LiveRunner) scan(ctx context.Context) {
 			}
 
 			cached := cachedBySymbol[item.Symbol]
-			fetchStart := liveFetchStart(now, r.loc, r.cfg.Session.Open, cached)
-			bars, err := r.prov.FetchBars(ctx, item.Symbol, fetchStart, now)
+			fetchStart := liveFetchStart(fetchEnd, fetchBase, cached)
+			bars, err := r.prov.FetchBars(ctx, item.Symbol, fetchStart, fetchEnd)
 			if err != nil {
-				rows[i] = errorEval(item, r.cfg, err.Error(), chartDate, set.ChartTime)
+				if now.Before(open) {
+					rows[i] = waitEval(item, r.cfg, chartDate, set.ChartTime, "WAIT 09:30", "Extended scan data error: "+err.Error())
+				} else {
+					rows[i] = errorEval(item, r.cfg, err.Error(), chartDate, set.ChartTime)
+				}
 				return
 			}
-			merged := mergeRTHBars(cached, bars, open, closeTime, r.loc)
+			merged := mergeSessionBars(cached, bars, extendedOpen, extendedClose, r.loc)
 			mergedBars[i] = merged
-			rows[i] = playbook.Evaluate(item, merged, now, r.loc, set, nil)
+			if now.Before(open) {
+				rows[i] = waitEval(item, r.cfg, chartDate, set.ChartTime, "WAIT 09:30", "Regular session has not opened.")
+			} else {
+				rows[i] = playbook.Evaluate(item, merged, now, r.loc, set, nil)
+			}
 		}()
 	}
 	wg.Wait()
@@ -172,6 +200,7 @@ func (r *LiveRunner) scan(ctx context.Context) {
 			r.barsBySymbol[item.Symbol] = mergedBars[i]
 		}
 	}
+	r.recordExtendedSnapshots(now, extendedStarted)
 	r.rows = rows
 	r.updated = time.Now().In(r.loc)
 	r.mu.Unlock()
@@ -219,10 +248,9 @@ func cloneBarsBySymbol(src map[string][]data.Bar) map[string][]data.Bar {
 	return out
 }
 
-func liveFetchStart(now time.Time, loc *time.Location, sessionOpen string, cached []data.Bar) time.Time {
-	open := sessionClock(now, loc, sessionOpen)
+func liveFetchStart(now time.Time, base time.Time, cached []data.Bar) time.Time {
 	if len(cached) == 0 {
-		return open
+		return base
 	}
 	last := cached[0].Time
 	for _, bar := range cached[1:] {
@@ -230,14 +258,18 @@ func liveFetchStart(now time.Time, loc *time.Location, sessionOpen string, cache
 			last = bar.Time
 		}
 	}
-	start := last.In(loc).Truncate(time.Minute).Add(-time.Minute)
-	if start.Before(open) || start.After(now) {
-		return open
+	start := last.In(base.Location()).Truncate(time.Minute).Add(-time.Minute)
+	if start.Before(base) || start.After(now) {
+		return base
 	}
 	return start
 }
 
 func mergeRTHBars(existing []data.Bar, incoming []data.Bar, open time.Time, closeTime time.Time, loc *time.Location) []data.Bar {
+	return mergeSessionBars(existing, incoming, open, closeTime, loc)
+}
+
+func mergeSessionBars(existing []data.Bar, incoming []data.Bar, open time.Time, closeTime time.Time, loc *time.Location) []data.Bar {
 	byMinute := make(map[time.Time]data.Bar, len(existing)+len(incoming))
 	add := func(bar data.Bar) {
 		bt := bar.Time.In(loc)
@@ -264,6 +296,10 @@ func mergeRTHBars(existing []data.Bar, incoming []data.Bar, open time.Time, clos
 		return out[i].Time.Before(out[j].Time)
 	})
 	return out
+}
+
+func (r *LiveRunner) AlertSoundPath() string {
+	return filepath.Join(r.cfg.Extended.SoundDir, r.cfg.Extended.SoundFile)
 }
 
 func sessionClock(now time.Time, loc *time.Location, hhmm string) time.Time {

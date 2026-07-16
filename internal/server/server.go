@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"strconv"
 	"time"
 
 	"0945-playbook/internal/dashboard"
@@ -24,11 +25,42 @@ type ReplayController interface {
 	StepReplay(context.Context, int) (dashboard.State, error)
 }
 
+type ExtendedProvider interface {
+	ExtendedSnapshot(context.Context, int64) dashboard.ExtendedState
+	AlertSoundPath() string
+}
+
 func Serve(ctx context.Context, addr string, provider StateProvider) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		state := provider.Snapshot(r.Context())
 		writeJSON(w, state)
+	})
+	mux.HandleFunc("/api/extended", func(w http.ResponseWriter, r *http.Request) {
+		extended, ok := provider.(ExtendedProvider)
+		if !ok {
+			http.Error(w, "extended live scan unavailable", http.StatusNotFound)
+			return
+		}
+		var selectedID int64
+		if raw := r.URL.Query().Get("minute"); raw != "" {
+			var err error
+			selectedID, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				http.Error(w, "invalid minute", http.StatusBadRequest)
+				return
+			}
+		}
+		writeJSON(w, extended.ExtendedSnapshot(r.Context(), selectedID))
+	})
+	mux.HandleFunc("/api/extended/sound", func(w http.ResponseWriter, r *http.Request) {
+		extended, ok := provider.(ExtendedProvider)
+		if !ok {
+			http.Error(w, "extended live scan unavailable", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		http.ServeFile(w, r, extended.AlertSoundPath())
 	})
 	mux.HandleFunc("/api/replay/seek", func(w http.ResponseWriter, r *http.Request) {
 		controller, ok := provider.(ReplayController)

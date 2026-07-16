@@ -13,7 +13,7 @@
         <div class="subline"><span id="mode">mode</span><span id="clock">--:--:--</span><span id="updated">waiting</span></div>
       </div>
       <div class="stats" id="stats"></div>
-      <div class="controls">
+      <div class="controls" id="playbookControls">
         <input id="search" type="search" placeholder="Ticker">
         <div class="history-controls">
           <button id="back" title="Previous signal snapshot" aria-label="Previous signal snapshot">←</button>
@@ -33,9 +33,29 @@
           <button data-filter="problem">Problems</button>
         </div>
       </div>
+      <div class="controls extended-controls" id="extendedControls" hidden>
+        <input id="extendedSearch" type="search" placeholder="Ticker">
+        <div class="history-controls extended-history-controls">
+          <button id="extendedBack" title="Previous minute">← 1m</button>
+          <button id="extendedPrevHit" title="Previous minute with matches">← Hit</button>
+          <button id="extendedNextHit" title="Next minute with matches">Hit →</button>
+          <button id="extendedForward" title="Next minute">1m →</button>
+          <button id="extendedLive" title="Return to current scan">LIVE</button>
+        </div>
+        <div class="sound-controls">
+          <button id="soundToggle">Start sound</button>
+          <button id="soundMute" disabled>Mute</button>
+        </div>
+        <div class="history-status" id="extendedStatus">Waiting for live data</div>
+      </div>
     </header>
 
-    <main>
+    <nav class="view-tabs">
+      <button class="active" data-view="playbook">09:45 Playbook</button>
+      <button id="extendedTab" data-view="extended" hidden>C/Avg Live</button>
+    </nav>
+
+    <main id="playbookView">
       <section class="strip" id="strip"></section>
       <section class="table-wrap">
         <table>
@@ -66,6 +86,27 @@
             </tr>
           </thead>
           <tbody id="rows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <main id="extendedView" hidden>
+      <section class="extended-summary" id="extendedSummary"></section>
+      <section class="table-wrap extended-table-wrap">
+        <table class="extended-table">
+          <thead>
+            <tr>
+              <th class="sym">Symbol</th>
+              <th>Signal</th>
+              <th id="extendedRatioHeading">C/Avg15</th>
+              <th>Delta</th>
+              <th>Price</th>
+              <th id="extendedAverageHeading">Avg15</th>
+              <th>Minute</th>
+              <th class="note">Industry</th>
+            </tr>
+          </thead>
+          <tbody id="extendedRows"></tbody>
         </table>
       </section>
     </main>
