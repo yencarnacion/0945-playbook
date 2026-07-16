@@ -20,6 +20,10 @@ const state = {
   soundEnabled: false,
   soundMuted: false,
   sound: null,
+  refreshing: false,
+  stripOrder: [],
+  renderedStats: '',
+  renderedExtendedSummary: '',
 };
 
 const el = {
@@ -159,6 +163,8 @@ el.live.addEventListener('click', () => {
 });
 
 async function refresh() {
+  if (state.refreshing) return;
+  state.refreshing = true;
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
     const payload = await response.json();
@@ -178,6 +184,8 @@ async function refresh() {
     await refreshExtended();
   } catch (error) {
     el.updated.textContent = `offline ${new Date().toLocaleTimeString()}`;
+  } finally {
+    state.refreshing = false;
   }
 }
 
@@ -316,7 +324,7 @@ async function moveExtended(direction, hitsOnly) {
 function renderExtended() {
   const payload = state.extended;
   if (!payload) {
-    el.extendedRows.innerHTML = '';
+    reconcileRows(el.extendedRows, []);
     el.extendedSummary.textContent = 'Waiting for the first extended-hours scan.';
     return;
   }
@@ -325,14 +333,15 @@ function renderExtended() {
   el.extendedAverageHeading.textContent = `Avg${n}`;
   const snapshot = payload.selected || {};
   const rows = (snapshot.rows || []).filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
-  el.extendedSummary.innerHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
+  const summaryHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
     <span>C/Avg${n} &lt; ${Number(payload.lower_signal_ratio).toFixed(2)} or &gt; ${Number(payload.upper_signal_ratio).toFixed(2)}</span>
     <span>${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET</span>`;
-  el.extendedRows.innerHTML = rows.map((row) => {
+  setHTMLIfChanged(el.extendedSummary, summaryHTML, 'renderedExtendedSummary');
+  reconcileRows(el.extendedRows, rows.map((row) => {
     const sideClass = row.side < 0 ? 'side-short' : 'side-long';
     const deltaClass = row.delta_pct > 0 ? 'pos' : 'neg';
     const signal = row.side < 0 ? 'LOW' : 'HIGH';
-    return `<tr class="${sideClass}">
+    return `<tr data-key="${escapeHTML(row.symbol)}" class="${sideClass}">
       <td class="sym"><a href="${row.chart_url}" target="_blank" rel="noreferrer">${escapeHTML(row.symbol)}</a><div>${escapeHTML(shortName(row.name))}</div></td>
       <td><span class="pill">${signal}</span></td>
       <td>${Number(row.ratio || 0).toFixed(4)}</td>
@@ -342,10 +351,11 @@ function renderExtended() {
       <td>${escapeHTML(row.clock)}</td>
       <td class="note">${escapeHTML(row.industry)}</td>
     </tr>`;
-  }).join('');
+  }));
   if (state.view === 'extended') {
-    el.stats.innerHTML = `<div class="stat"><strong>${snapshot.rows ? snapshot.rows.length : 0}</strong><span>Matches</span></div>
+    const statsHTML = `<div class="stat"><strong>${snapshot.rows ? snapshot.rows.length : 0}</strong><span>Matches</span></div>
       <div class="stat"><strong>${n}</strong><span>Avg bars</span></div>`;
+    setHTMLIfChanged(el.stats, statsHTML, 'renderedStats');
   }
 }
 
@@ -500,14 +510,15 @@ function renderStats(stats) {
     ['High EV', stats.high_ev],
     ['Errors', stats.errors],
   ];
-  el.stats.innerHTML = cells.map(([label, value]) => (
+  const html = cells.map(([label, value]) => (
     `<div class="stat"><strong>${value || 0}</strong><span>${label}</span></div>`
   )).join('');
+  setHTMLIfChanged(el.stats, html, 'renderedStats');
 }
 
 function render() {
   const rows = state.rows.filter(rowVisible);
-  el.rows.innerHTML = rows.map(rowHTML).join('');
+  reconcileRows(el.rows, rows.map(rowHTML));
   renderStrip();
   requestAnimationFrame(drawCharts);
 }
@@ -522,15 +533,22 @@ function rowVisible(row) {
 }
 
 function renderStrip() {
-  const interesting = state.rows
+  const candidates = state.rows
     .filter((row) => row.phase === 'active' || row.phase === 'signal' || row.phase === 'likely' || row.phase === 'done')
-    .filter(passesVolume)
+    .filter(passesVolume);
+  const present = new Set(candidates.map((row) => row.symbol));
+  state.stripOrder = state.stripOrder.filter((symbol) => present.has(symbol));
+  const known = new Set(state.stripOrder);
+  candidates
+    .filter((row) => !known.has(row.symbol))
     .sort((a, b) => (b.ev_score || 0) - (a.ev_score || 0))
-    .slice(0, 18);
+    .forEach((row) => state.stripOrder.push(row.symbol));
+  const bySymbol = new Map(candidates.map((row) => [row.symbol, row]));
+  const interesting = state.stripOrder.slice(0, 18).map((symbol) => bySymbol.get(symbol));
 
-  el.strip.innerHTML = interesting.map((row) => {
+  reconcileCards(el.strip, interesting.map((row) => {
     const side = row.side < 0 ? 'short' : 'long';
-    return `<a class="tile side-${side} phase-${row.phase || 'none'}" href="${row.chart_url}" target="_blank" rel="noreferrer">
+    return `<a data-key="${escapeHTML(row.symbol)}" class="tile side-${side} phase-${row.phase || 'none'}" href="${row.chart_url}" target="_blank" rel="noreferrer">
       <div class="tile-head">
         <span class="ticker">${escapeHTML(row.symbol)}</span>
         <span class="signal">${escapeHTML(signalText(row))}</span>
@@ -545,7 +563,7 @@ function renderStrip() {
         <span>C/Avg ${fmt(row.ratio, 3)}</span><span>${pct(row.delta_pct)}</span>
       </div>
     </a>`;
-  }).join('');
+  }));
 }
 
 function isRelevant(row) {
@@ -568,7 +586,7 @@ function rowHTML(row) {
   const evClass = row.ev_score >= 80 ? 'high' : row.ev_score >= 50 ? 'mid' : '';
   const deltaClass = row.delta_pct > 0 ? 'pos' : row.delta_pct < 0 ? 'neg' : 'muted';
   const spark = encodeURIComponent(JSON.stringify(row.spark || []));
-  return `<tr class="phase-${row.phase || 'none'} ${sideClass}">
+  return `<tr data-key="${escapeHTML(row.symbol)}" class="phase-${row.phase || 'none'} ${sideClass}">
     <td class="sym"><a href="${row.chart_url}" target="_blank" rel="noreferrer">${escapeHTML(row.symbol)}</a><div>${escapeHTML(shortName(row.name))}</div></td>
     <td><span class="pill">${escapeHTML(row.status || '')}</span></td>
     <td class="ev ${evClass}">${fmt(row.ev_score, 0)}</td>
@@ -592,6 +610,52 @@ function rowHTML(row) {
     <td class="spark"><canvas width="192" height="52" data-spark="${spark}" data-side="${row.side || 0}"></canvas></td>
     <td class="note">${escapeHTML(row.reason || row.error || '')}</td>
   </tr>`;
+}
+
+function setHTMLIfChanged(element, html, cacheKey) {
+  if (state[cacheKey] === html) return;
+  state[cacheKey] = html;
+  element.innerHTML = html;
+}
+
+// Keep existing row nodes in place. Replacing the entire tbody each second makes
+// browsers repaint the whole table and is especially distracting while scrolling.
+function reconcileRows(container, htmlRows) {
+  const template = document.createElement('tbody');
+  template.innerHTML = htmlRows.join('');
+  reconcileKeyed(container, [...template.children], true);
+}
+
+function reconcileCards(container, htmlCards) {
+  const template = document.createElement('div');
+  template.innerHTML = htmlCards.join('');
+  reconcileKeyed(container, [...template.children], false);
+}
+
+function reconcileKeyed(container, desired, patchCells) {
+  const existing = new Map([...container.children].map((node) => [node.dataset.key, node]));
+  desired.forEach((next, index) => {
+    const current = existing.get(next.dataset.key);
+    if (!current) {
+      container.insertBefore(next, container.children[index] || null);
+      return;
+    }
+    if (patchCells) {
+      current.className = next.className;
+      [...next.children].forEach((cell, cellIndex) => {
+        const oldCell = current.children[cellIndex];
+        if (oldCell.className !== cell.className) oldCell.className = cell.className;
+        if (oldCell.innerHTML !== cell.innerHTML) oldCell.innerHTML = cell.innerHTML;
+      });
+    } else if (current.outerHTML !== next.outerHTML) {
+      current.className = next.className;
+      current.href = next.href;
+      current.innerHTML = next.innerHTML;
+    }
+    if (container.children[index] !== current) container.insertBefore(current, container.children[index] || null);
+    existing.delete(next.dataset.key);
+  });
+  existing.forEach((node) => node.remove());
 }
 
 function drawCharts() {
