@@ -22,6 +22,8 @@ const state = {
   sound: null,
   refreshing: false,
   stripOrder: [],
+  extendedOrder: [],
+  extendedOrderSnapshot: 0,
   renderedStats: '',
   renderedExtendedSummary: '',
 };
@@ -81,6 +83,8 @@ el.extendedNextHit.addEventListener('click', () => moveExtended(1, true));
 el.extendedLive.addEventListener('click', async () => {
   state.extendedFollowLive = true;
   state.extendedSelectedID = 0;
+  state.extendedOrder = [];
+  state.extendedOrderSnapshot = 0;
   await refreshExtended();
 });
 
@@ -238,8 +242,13 @@ function applyPayload(payload) {
   el.clock.textContent = payload.clock || '--:--:--';
   updateReplayInput(payload);
   updateUpdatedText(payload);
-  renderStats(payload.stats || {});
   updateHistoryStatus();
+  if (state.view === 'extended') {
+    // refreshExtended renders this tab. Do not briefly paint the playbook stats
+    // first on every poll; that visible swap was the remaining tab flicker.
+    return;
+  }
+  renderStats(payload.stats || {});
   render();
 }
 
@@ -332,7 +341,26 @@ function renderExtended() {
   el.extendedRatioHeading.textContent = `C/Avg${n}`;
   el.extendedAverageHeading.textContent = `Avg${n}`;
   const snapshot = payload.selected || {};
-  const rows = (snapshot.rows || []).filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
+  const candidates = snapshot.rows || [];
+  const snapshotID = Number(snapshot.id || 0);
+  // A live snapshot is recalculated on every refresh and sorted by the latest
+  // ratio. Preserve the established visual order so small quote changes do not
+  // shuffle all of the rows under the reader's eyes. Historical snapshots still
+  // open in their recorded ranking.
+  if (!state.extendedFollowLive && state.extendedOrderSnapshot !== snapshotID) {
+    state.extendedOrder = [];
+  }
+  state.extendedOrderSnapshot = snapshotID;
+  const present = new Set(candidates.map((row) => row.symbol));
+  state.extendedOrder = state.extendedOrder.filter((symbol) => present.has(symbol));
+  const known = new Set(state.extendedOrder);
+  for (const row of candidates) {
+    if (!known.has(row.symbol)) state.extendedOrder.push(row.symbol);
+  }
+  const bySymbol = new Map(candidates.map((row) => [row.symbol, row]));
+  const rows = state.extendedOrder
+    .map((symbol) => bySymbol.get(symbol))
+    .filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
   const summaryHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
     <span>C/Avg${n} &lt; ${Number(payload.lower_signal_ratio).toFixed(2)} or &gt; ${Number(payload.upper_signal_ratio).toFixed(2)}</span>
     <span>${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET</span>`;
