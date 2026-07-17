@@ -39,13 +39,13 @@ func (r *LiveRunner) recordExtendedSnapshots(now time.Time, started time.Time) {
 			ID:      minute.Unix() / 60,
 			Clock:   minute.Format("15:04"),
 			Updated: now.Format(time.RFC3339),
-			Rows:    r.extendedRowsAt(minute, dataStart),
+			Rows:    r.extendedRowsAt(minute, dataStart, windowStart),
 		}
 		r.upsertExtendedSnapshot(snapshot)
 	}
 }
 
-func (r *LiveRunner) extendedRowsAt(cutoff time.Time, dataStart time.Time) []dashboard.ExtendedRow {
+func (r *LiveRunner) extendedRowsAt(cutoff time.Time, dataStart time.Time, volumeStart time.Time) []dashboard.ExtendedRow {
 	rows := make([]dashboard.ExtendedRow, 0)
 	for _, item := range r.items {
 		bars := r.barsBySymbol[item.Symbol]
@@ -85,18 +85,35 @@ func (r *LiveRunner) extendedRowsAt(cutoff time.Time, dataStart time.Time) []das
 		if ratio < 1 {
 			side = -1
 		}
+		volume := 0.0
+		priorClose := 0.0
+		for _, bar := range bars {
+			bt := bar.Time.In(r.loc)
+			if !bt.Before(volumeStart) && !bt.After(cutoff) {
+				volume += bar.Volume
+			}
+			if bt.Before(volumeStart) && bt.Hour() >= 9 && (bt.Hour() > 9 || bt.Minute() >= 30) && bt.Hour() < 16 {
+				priorClose = bar.Close
+			}
+		}
+		changePct := 0.0
+		if priorClose > 0 {
+			changePct = price/priorClose - 1
+		}
 		rows = append(rows, dashboard.ExtendedRow{
-			Symbol:   item.Symbol,
-			Name:     item.Name,
-			Industry: item.Industry,
-			Order:    item.Order,
-			Price:    price,
-			Average:  average,
-			Ratio:    ratio,
-			DeltaPct: ratio - 1,
-			Side:     side,
-			Clock:    cutoff.Format("15:04"),
-			ChartURL: chartURL(r.cfg.Scan.ChartBaseURL, item.Symbol, cutoff.Format("2006-01-02"), cutoff.Format("1504"), side),
+			Symbol:    item.Symbol,
+			Name:      item.Name,
+			Industry:  item.Industry,
+			Order:     item.Order,
+			Price:     price,
+			Average:   average,
+			Ratio:     ratio,
+			DeltaPct:  ratio - 1,
+			ChangePct: changePct,
+			Volume:    volume,
+			Side:      side,
+			Clock:     cutoff.Format("15:04"),
+			ChartURL:  chartURL(r.cfg.Scan.ChartBaseURL, item.Symbol, cutoff.Format("2006-01-02"), cutoff.Format("1504"), side),
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {

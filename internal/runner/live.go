@@ -146,14 +146,10 @@ func (r *LiveRunner) scan(ctx context.Context) {
 	if fetchEnd.After(extendedClose) {
 		fetchEnd = extendedClose
 	}
-	fetchBase := open
-	if now.Before(open) {
-		fetchBase = extendedOpen
-		startedMinute := extendedStarted.In(r.loc).Truncate(time.Minute)
-		if startedMinute.After(fetchBase) {
-			fetchBase = startedMinute
-		}
-	}
+	// Keep enough history to locate the previous trading day's 16:00 close,
+	// including across weekends and market holidays. Today's 04:00 bars are also
+	// needed when the process is started after the opening bell.
+	fetchBase := extendedOpen.AddDate(0, 0, -7)
 
 	rows := make([]playbook.Evaluation, len(r.items))
 	mergedBars := make([][]data.Bar, len(r.items))
@@ -183,7 +179,7 @@ func (r *LiveRunner) scan(ctx context.Context) {
 				}
 				return
 			}
-			merged := mergeSessionBars(cached, bars, extendedOpen, extendedClose, r.loc)
+			merged := mergeSessionBars(cached, bars, fetchBase, extendedClose, r.loc)
 			mergedBars[i] = merged
 			if now.Before(open) {
 				rows[i] = waitEval(item, r.cfg, chartDate, set.ChartTime, "WAIT 09:30", "Regular session has not opened.")

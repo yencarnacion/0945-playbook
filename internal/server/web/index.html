@@ -92,23 +92,26 @@
 
     <main id="extendedView" hidden>
       <section class="extended-summary" id="extendedSummary"></section>
+      <div class="extended-content">
       <section class="table-wrap extended-table-wrap">
         <table class="extended-table">
           <thead>
             <tr>
-              <th class="sym">Symbol</th>
-              <th>Signal</th>
-              <th id="extendedRatioHeading">C/Avg15</th>
-              <th>Delta</th>
-              <th>Price</th>
-              <th id="extendedAverageHeading">Avg15</th>
-              <th>Minute</th>
-              <th class="note">Industry</th>
+              <th class="sym sortable" data-sort="symbol">Symbol</th>
+              <th class="sortable" data-sort="ratio" id="extendedRatioHeading">C/Avg15</th>
+              <th class="sortable" data-sort="price">Price</th>
+              <th class="sortable" data-sort="change_pct">% Chg Prev Close</th>
+              <th class="sortable" data-sort="delta_pct">Delta</th>
+              <th class="sortable" data-sort="clock">Minute</th>
+              <th class="sortable" data-sort="volume">Vol Since 04:00</th>
+              <th class="note sortable" data-sort="industry">Industry</th>
             </tr>
           </thead>
           <tbody id="extendedRows"></tbody>
         </table>
       </section>
+      <aside class="industry-panel"><h2>Industries</h2><div id="extendedIndustries"></div></aside>
+      </div>
     </main>
 
     <script src="/app.js"></script>

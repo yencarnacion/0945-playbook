@@ -24,6 +24,7 @@ const state = {
   stripOrder: [],
   extendedOrder: [],
   extendedOrderSnapshot: 0,
+  extendedSort: { key: 'ratio', direction: 'desc' },
   renderedStats: '',
   renderedExtendedSummary: '',
 };
@@ -62,8 +63,17 @@ const el = {
   soundToggle: document.getElementById('soundToggle'),
   soundMute: document.getElementById('soundMute'),
   extendedRatioHeading: document.getElementById('extendedRatioHeading'),
-  extendedAverageHeading: document.getElementById('extendedAverageHeading'),
+  extendedIndustries: document.getElementById('extendedIndustries'),
 };
+
+document.querySelector('.extended-table thead').addEventListener('click', (event) => {
+  const heading = event.target.closest('th[data-sort]');
+  if (!heading) return;
+  const key = heading.dataset.sort;
+  state.extendedSort.direction = state.extendedSort.key === key && state.extendedSort.direction === 'desc' ? 'asc' : 'desc';
+  state.extendedSort.key = key;
+  renderExtended();
+});
 
 document.querySelector('.view-tabs').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-view]');
@@ -339,7 +349,6 @@ function renderExtended() {
   }
   const n = Number(payload.avg_close_bars || 15);
   el.extendedRatioHeading.textContent = `C/Avg${n}`;
-  el.extendedAverageHeading.textContent = `Avg${n}`;
   const snapshot = payload.selected || {};
   const candidates = snapshot.rows || [];
   const snapshotID = Number(snapshot.id || 0);
@@ -361,22 +370,43 @@ function renderExtended() {
   const rows = state.extendedOrder
     .map((symbol) => bySymbol.get(symbol))
     .filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
+  const { key, direction } = state.extendedSort;
+  rows.sort((a, b) => {
+    const stringSort = key === 'symbol' || key === 'clock' || key === 'industry';
+    const av = stringSort ? String(a[key] || '') : Number(a[key] || 0);
+    const bv = stringSort ? String(b[key] || '') : Number(b[key] || 0);
+    const result = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
+    return direction === 'asc' ? result : -result;
+  });
+  document.querySelectorAll('.extended-table th[data-sort]').forEach((heading) => {
+    heading.classList.toggle('sort-active', heading.dataset.sort === key);
+    heading.dataset.direction = heading.dataset.sort === key ? direction : '';
+  });
+  const industries = new Map();
+  for (const row of rows) {
+    const industry = row.industry || 'Unknown';
+    industries.set(industry, (industries.get(industry) || 0) + 1);
+  }
+  const industryHTML = [...industries.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([industry, count]) => `<div><span>${escapeHTML(industry)}</span><strong>${count}</strong></div>`).join('');
+  setHTMLIfChanged(el.extendedIndustries, industryHTML || '<p>No matching groups</p>', 'renderedIndustries');
   const summaryHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
     <span>C/Avg${n} &lt; ${Number(payload.lower_signal_ratio).toFixed(2)} or &gt; ${Number(payload.upper_signal_ratio).toFixed(2)}</span>
     <span>${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET</span>`;
   setHTMLIfChanged(el.extendedSummary, summaryHTML, 'renderedExtendedSummary');
   reconcileRows(el.extendedRows, rows.map((row) => {
     const sideClass = row.side < 0 ? 'side-short' : 'side-long';
-    const deltaClass = row.delta_pct > 0 ? 'pos' : 'neg';
-    const signal = row.side < 0 ? 'LOW' : 'HIGH';
+    const ratioDeltaClass = row.delta_pct > 0 ? 'pos' : row.delta_pct < 0 ? 'neg' : 'muted';
+    const changeClass = row.change_pct > 0 ? 'pos' : row.change_pct < 0 ? 'neg' : 'muted';
     return `<tr data-key="${escapeHTML(row.symbol)}" class="${sideClass}">
       <td class="sym"><a href="${row.chart_url}" target="_blank" rel="noreferrer">${escapeHTML(row.symbol)}</a><div>${escapeHTML(shortName(row.name))}</div></td>
-      <td><span class="pill">${signal}</span></td>
       <td>${Number(row.ratio || 0).toFixed(4)}</td>
-      <td class="${deltaClass}">${pct(row.delta_pct)}</td>
       <td>${money(row.price)}</td>
-      <td>${money(row.average)}</td>
+      <td class="${changeClass}">${pct(row.change_pct)}</td>
+      <td class="${ratioDeltaClass}">${pct(row.delta_pct)}</td>
       <td>${escapeHTML(row.clock)}</td>
+      <td>${compact(row.volume)}</td>
       <td class="note">${escapeHTML(row.industry)}</td>
     </tr>`;
   }));
