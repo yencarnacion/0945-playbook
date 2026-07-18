@@ -94,7 +94,9 @@ func (r *LiveRunner) Snapshot(context.Context) dashboard.State {
 	if r.scanning {
 		clock += " scanning"
 	}
-	return dashboard.Build(r.project, "live", clock, r.cfg.Scan.ChartBaseURL, r.cfg.Scan.MinFirst15VolumeFilter, r.updated, r.rows)
+	state := dashboard.Build(r.project, "live", clock, r.cfg.Scan.ChartBaseURL, r.cfg.Scan.MinFirst15VolumeFilter, r.updated, r.rows)
+	state.Kane = kaneState(r.items, r.barsBySymbol, now, r.loc, r.cfg.Scan.ChartBaseURL)
+	return state
 }
 
 func (r *LiveRunner) scan(ctx context.Context) {

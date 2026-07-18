@@ -27,6 +27,34 @@ type State struct {
 	VolumeFilter float64               `json:"volume_filter"`
 	Stats        Stats                 `json:"stats"`
 	Rows         []playbook.Evaluation `json:"rows"`
+	Kane         KaneState             `json:"kane"`
+}
+
+type KaneRow struct {
+	Symbol             string  `json:"symbol"`
+	Name               string  `json:"name"`
+	Industry           string  `json:"industry"`
+	Setup              string  `json:"setup"`
+	Rank               int     `json:"rank"`
+	Preferred          bool    `json:"preferred"`
+	Preliminary        bool    `json:"preliminary"`
+	Price              float64 `json:"price"`
+	PriorClose         float64 `json:"prior_close"`
+	GapPct             float64 `json:"gap_pct"`
+	GapATR             float64 `json:"gap_atr"`
+	PriorCloseLocation float64 `json:"prior_close_location"`
+	SampleEV           float64 `json:"sample_ev"`
+	WinRate            float64 `json:"win_rate"`
+	TargetPct          float64 `json:"target_pct"`
+	StopPct            float64 `json:"stop_pct"`
+	VolumeFrom0400     float64 `json:"volume_from_0400"`
+	Reason             string  `json:"reason"`
+	ChartURL           string  `json:"chart_url"`
+}
+type KaneState struct {
+	Available   bool      `json:"available"`
+	Preliminary bool      `json:"preliminary"`
+	Rows        []KaneRow `json:"rows"`
 }
 
 type ExtendedRow struct {

@@ -12,3 +12,6 @@
 /dist/
 *.log
 /0945-playbook
+
+# Files kept locally but intentionally excluded from version control
+/local/

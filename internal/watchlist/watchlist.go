@@ -5,14 +5,22 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 )
 
 type Item struct {
-	Symbol   string `json:"symbol"`
-	Name     string `json:"name"`
-	Industry string `json:"industry"`
-	Order    int    `json:"order"`
+	Symbol   string  `json:"symbol"`
+	Name     string  `json:"name"`
+	Industry string  `json:"industry"`
+	Order    int     `json:"order"`
+	ATR14    float64 `json:"atr14"`
+}
+
+func number(value string) float64 {
+	value = strings.TrimSpace(strings.Trim(value, "$%"))
+	v, _ := strconv.ParseFloat(value, 64)
+	return v
 }
 
 func Load(path string, max int) ([]Item, error) {
@@ -95,6 +103,7 @@ func itemFromRecord(rec []string, index map[string]int, order int) Item {
 		Name:     get("name", -1),
 		Industry: get("industry", -1),
 		Order:    order,
+		ATR14:    number(get("atr - 14 days", -1)),
 	}
 }
 

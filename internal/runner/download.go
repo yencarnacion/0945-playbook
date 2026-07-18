@@ -13,7 +13,7 @@ import (
 )
 
 func Download(ctx context.Context, cfg config.Config, loc *time.Location, items []watchlist.Item, prov data.Provider, day string) error {
-	start, err := parseDayClock(day, cfg.Session.Open, loc)
+	start, err := parseDayClock(day, cfg.Extended.Start, loc)
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func Download(ctx context.Context, cfg config.Config, loc *time.Location, items 
 				return
 			}
 
-			if cached, err := data.LoadBars(cfg.Scan.DataDir, day, item.Symbol); err == nil && len(cached) > 0 {
+			if cached, covered, err := data.LoadBarsCoverage(cfg.Scan.DataDir, day, item.Symbol); err == nil && len(cached) > 0 && covered.Equal(start) {
 				n := done.Add(1)
 				skipped.Add(1)
 				if n == 1 || n%25 == 0 || int(n) == len(items) {
@@ -57,7 +57,7 @@ func Download(ctx context.Context, cfg config.Config, loc *time.Location, items 
 				errCh <- fmt.Errorf("%s: %w", item.Symbol, err)
 				return
 			}
-			if err := data.SaveBars(cfg.Scan.DataDir, day, item.Symbol, bars); err != nil {
+			if err := data.SaveBarsFrom(cfg.Scan.DataDir, day, item.Symbol, start, bars); err != nil {
 				failed.Add(1)
 				errCh <- fmt.Errorf("%s save: %w", item.Symbol, err)
 				return

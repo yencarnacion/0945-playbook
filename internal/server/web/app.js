@@ -20,6 +20,9 @@ const state = {
   soundEnabled: false,
   soundMuted: false,
   sound: null,
+  kaneSoundEnabled: false, kaneSoundMuted: false, kaneSymbols: null,
+  kaneSound: null,
+  kaneVolumeFilter: 100000,
   refreshing: false,
   stripOrder: [],
   extendedOrder: [],
@@ -64,6 +67,9 @@ const el = {
   soundMute: document.getElementById('soundMute'),
   extendedRatioHeading: document.getElementById('extendedRatioHeading'),
   extendedIndustries: document.getElementById('extendedIndustries'),
+  kaneView: document.getElementById('kaneView'), kaneRows: document.getElementById('kaneRows'), kaneSummary: document.getElementById('kaneSummary'), kaneControls: document.getElementById('kaneControls'),
+  kaneSoundToggle: document.getElementById('kaneSoundToggle'), kaneSoundMute: document.getElementById('kaneSoundMute'),
+  kaneVolumeFilter: document.getElementById('kaneVolumeFilter'), kaneVolumePresets: document.getElementById('kaneVolumePresets'),
 };
 
 document.querySelector('.extended-table thead').addEventListener('click', (event) => {
@@ -112,6 +118,22 @@ el.soundMute.addEventListener('click', () => {
   state.soundMuted = !state.soundMuted;
   if (state.sound) state.sound.muted = state.soundMuted;
   updateSoundControls();
+});
+
+el.kaneSoundToggle.addEventListener('click', () => {
+  state.kaneSoundEnabled = !state.kaneSoundEnabled;
+  if (state.kaneSoundEnabled && !state.kaneSound) { state.kaneSound = new Audio('/api/extended/sound'); state.kaneSound.preload = 'auto'; state.kaneSound.load(); }
+  updateKaneSoundControls();
+});
+el.kaneSoundMute.addEventListener('click', () => { state.kaneSoundMuted = !state.kaneSoundMuted; updateKaneSoundControls(); });
+el.kaneVolumeFilter.addEventListener('input', () => {
+  state.kaneVolumeFilter = Math.max(0, Number(el.kaneVolumeFilter.value || 0));
+  updateKaneVolumePresets(); syncKaneSymbols(); renderKane((state.livePayload && state.livePayload.kane) || {});
+});
+el.kaneVolumePresets.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-volume]'); if (!button) return;
+  state.kaneVolumeFilter = Number(button.dataset.volume); el.kaneVolumeFilter.value = String(state.kaneVolumeFilter);
+  updateKaneVolumePresets(); syncKaneSymbols(); renderKane((state.livePayload && state.livePayload.kane) || {});
 });
 
 el.search.addEventListener('input', () => {
@@ -243,6 +265,8 @@ function applyPayload(payload) {
   state.isReplay = payload.mode === 'replay';
   const extendedAvailable = payload.mode === 'live';
   state.rows = payload.rows || [];
+  renderKane(payload.kane || {});
+  detectKaneEntries(payload.kane || {});
   state.volumeFilter = Number(payload.volume_filter || 0);
   document.body.classList.toggle('replay-mode', state.isReplay);
   el.extendedTab.hidden = !extendedAvailable;
@@ -265,21 +289,72 @@ function applyPayload(payload) {
 function selectView(view) {
   if (view === 'extended' && state.isReplay) return;
   state.view = view;
-  const extended = view === 'extended';
+  const extended = view === 'extended'; const kane = view === 'kane';
   document.body.classList.toggle('extended-mode', extended);
-  el.playbookView.hidden = extended;
-  el.playbookControls.hidden = extended;
+  document.body.classList.toggle('kane-mode', kane);
+  el.playbookView.hidden = extended || kane;
+  el.playbookControls.hidden = extended || kane;
   el.extendedView.hidden = !extended;
   el.extendedControls.hidden = !extended;
+  el.kaneView.hidden = !kane; el.kaneControls.hidden = !kane;
   for (const button of document.querySelectorAll('.view-tabs button[data-view]')) {
     button.classList.toggle('active', button.dataset.view === view);
   }
   if (extended) {
     renderExtended();
     updateExtendedStatus();
+  } else if (kane) {
+    renderKane((state.livePayload && state.livePayload.kane) || {});
   } else if (state.livePayload) {
     renderStats(state.livePayload.stats || {});
   }
+}
+
+function renderKane(kane) {
+  const allRows = kane.rows || [];
+  const rows = allRows.filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter);
+  const preferredSymbols = new Set();
+  const preferredSetups = new Set();
+  for (const row of rows) {
+    if (preferredSetups.has(row.setup)) continue;
+    preferredSetups.add(row.setup); preferredSymbols.add(row.symbol);
+  }
+  const preferred = preferredSymbols.size;
+  el.kaneSummary.innerHTML = `<strong>${kane.preliminary ? 'PRELIMINARY' : 'OPEN-LOCKED'} · ${rows.length}/${allRows.length} shown</strong><span>Min volume ${compact(state.kaneVolumeFilter) || 'ALL'} since 04:00 · ${preferred} visible strategy leader${preferred === 1 ? '' : 's'}</span><span>Each setup ranks independently; EV is sample evidence—not ticker-specific predicted EV</span>`;
+  reconcileRows(el.kaneRows, rows.map((row) => {
+    const preferredOnScreen = preferredSymbols.has(row.symbol);
+    return `<tr data-key="${escapeHTML(row.symbol)}" class="${preferredOnScreen ? 'phase-active side-long' : 'side-long'}">
+    <td><strong>${escapeHTML(row.setup)} #${row.rank}</strong>${preferredOnScreen ? '<div class="pos">PREFERRED ON SCREEN</div>' : ''}</td>
+    <td class="sym"><a href="${row.chart_url}" target="_blank" rel="noreferrer">${escapeHTML(row.symbol)}</a><div>${escapeHTML(shortName(row.name))}</div></td>
+    <td>${escapeHTML(row.setup)}</td><td class="${row.gap_pct < 0 ? 'neg' : 'pos'}">${pct(row.gap_pct)}</td><td>${Number(row.gap_atr || 0).toFixed(2)}×</td><td>${money(row.price)}</td><td>${compact(row.volume_from_0400)}</td>
+    <td>${pct(row.prior_close_location)}</td><td>${pct(row.sample_ev)}</td><td>${pct(row.win_rate)}</td><td>${pct(row.target_pct)} / ${pct(row.stop_pct)} stop</td><td class="note">${escapeHTML(row.reason)}</td></tr>`;
+  }));
+}
+
+function detectKaneEntries(kane) {
+  const symbols = new Set((kane.rows || []).filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter).map((row) => row.symbol));
+  if (state.kaneSymbols !== null && state.kaneSoundEnabled && !state.kaneSoundMuted && [...symbols].some((symbol) => !state.kaneSymbols.has(symbol))) playKaneAlertSound();
+  state.kaneSymbols = symbols;
+}
+
+function updateKaneVolumePresets() {
+  for (const button of el.kaneVolumePresets.querySelectorAll('button[data-volume]')) button.classList.toggle('active', Number(button.dataset.volume) === state.kaneVolumeFilter);
+}
+
+function syncKaneSymbols() {
+  const rows = (state.livePayload && state.livePayload.kane && state.livePayload.kane.rows) || [];
+  state.kaneSymbols = new Set(rows.filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter).map((row) => row.symbol));
+}
+
+function playKaneAlertSound() {
+  if (!state.kaneSound) return;
+  state.kaneSound.currentTime = 0; state.kaneSound.muted = state.kaneSoundMuted;
+  state.kaneSound.play().catch(() => { el.kaneSummary.title = 'Click Start sound again to allow browser audio'; });
+}
+
+function updateKaneSoundControls() {
+  el.kaneSoundToggle.textContent = state.kaneSoundEnabled ? 'Stop sound' : 'Start sound';
+  el.kaneSoundMute.disabled = !state.kaneSoundEnabled; el.kaneSoundMute.textContent = state.kaneSoundMuted ? 'Unmute' : 'Mute';
 }
 
 async function refreshExtended(selectedID = 0) {

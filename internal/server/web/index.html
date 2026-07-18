@@ -48,11 +48,23 @@
         </div>
         <div class="history-status" id="extendedStatus">Waiting for live data</div>
       </div>
+      <div class="controls kane-controls" id="kaneControls" hidden>
+        <div class="kane-volume-controls">
+          <label for="kaneVolumeFilter">Min vol 04:00+</label>
+          <input id="kaneVolumeFilter" type="number" min="0" step="10000" value="100000" inputmode="numeric" aria-label="Minimum KaneScan volume since 04:00">
+          <div class="segments" id="kaneVolumePresets">
+            <button data-volume="0">ALL</button><button data-volume="100000" class="active">100K</button><button data-volume="250000">250K</button><button data-volume="500000">500K</button>
+          </div>
+        </div>
+        <div class="sound-controls"><button id="kaneSoundToggle">Start sound</button><button id="kaneSoundMute" disabled>Mute</button></div>
+        <div class="history-status kane-alert-note">New visible candidates alert</div>
+      </div>
     </header>
 
     <nav class="view-tabs">
       <button class="active" data-view="playbook">09:45 Playbook</button>
       <button id="extendedTab" data-view="extended" hidden>C/Avg Live</button>
+      <button id="kaneTab" data-view="kane">KaneScan</button>
     </nav>
 
     <main id="playbookView">
@@ -112,6 +124,12 @@
       </section>
       <aside class="industry-panel"><h2>Industries</h2><div id="extendedIndustries"></div></aside>
       </div>
+    </main>
+    <main id="kaneView" hidden>
+      <section class="extended-summary" id="kaneSummary"></section>
+      <section class="table-wrap extended-table-wrap"><table class="extended-table"><thead><tr>
+        <th>Rank</th><th class="sym">Symbol</th><th>Setup</th><th>Gap</th><th>Gap/ATR14</th><th>Price</th><th>Vol since 04:00</th><th>Prior close pos.</th><th>Research EV</th><th>Clean win</th><th>Plan</th><th class="note">Why</th>
+      </tr></thead><tbody id="kaneRows"></tbody></table></section>
     </main>
 
     <script src="/app.js"></script>

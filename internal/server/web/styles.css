@@ -94,6 +94,9 @@ body.extended-mode .stats {
   grid-template-columns: repeat(2, minmax(90px, 1fr));
 }
 
+body.kane-mode .topbar { grid-template-columns: 260px minmax(0, 1fr); }
+body.kane-mode .stats { display: none; }
+
 .stat {
   padding: 6px 8px;
   background: var(--band);
@@ -272,6 +275,19 @@ main {
 
 .extended-table-wrap {
   height: calc(100vh - 170px);
+}
+
+.kane-controls { display: flex; justify-content: flex-end; align-items: center; gap: 12px; min-width: 0; }
+.kane-volume-controls { display: flex; align-items: center; gap: 6px; white-space: nowrap; order: 1; }
+.kane-controls .sound-controls { order: 2; display: flex; gap: 4px; white-space: nowrap; }
+.kane-alert-note { order: 3; white-space: nowrap; }
+.kane-volume-controls label { color: #9aa7b5; font-size: 12px; font-weight: 700; }
+#kaneVolumeFilter { width: 112px; font-size: 17px; font-weight: 800; padding: 7px 8px; }
+.kane-volume-controls .segments { display: flex; gap: 3px; }
+
+@media (max-width: 1100px) {
+  .kane-alert-note { display: none; }
+  .kane-volume-controls label { display: none; }
 }
 
 .extended-content {

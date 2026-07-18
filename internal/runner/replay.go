@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -64,9 +65,31 @@ func NewReplay(project, mode string, cfg config.Config, loc *time.Location, item
 			r.errors[item.Symbol] = data.MissingCacheError(day, item.Symbol).Error()
 			continue
 		}
+		if previousDay := latestCachedDayBefore(cfg.Scan.DataDir, day); previousDay != "" {
+			if prior, priorErr := data.LoadBars(cfg.Scan.DataDir, previousDay, item.Symbol); priorErr == nil {
+				bars = append(prior, bars...)
+			}
+		}
 		r.barsBySymbol[item.Symbol] = bars
 	}
 	return r, nil
+}
+
+func latestCachedDayBefore(dataDir, day string) string {
+	entries, err := os.ReadDir(dataDir)
+	if err != nil {
+		return ""
+	}
+	best := ""
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() >= day || entry.Name() <= best {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", entry.Name()); err == nil {
+			best = entry.Name()
+		}
+	}
+	return best
 }
 
 func NewDemo(project string, cfg config.Config, loc *time.Location, items []watchlist.Item) (*ReplayRunner, error) {
@@ -163,7 +186,9 @@ func (r *ReplayRunner) snapshotAt(now time.Time) dashboard.State {
 		}
 		rows = append(rows, playbook.Evaluate(item, r.barsBySymbol[item.Symbol], now, r.loc, set, nil))
 	}
-	return dashboard.Build(r.project, r.mode, now.In(r.loc).Format("15:04:05"), r.cfg.Scan.ChartBaseURL, r.cfg.Scan.MinFirst15VolumeFilter, time.Now().In(r.loc), rows)
+	state := dashboard.Build(r.project, r.mode, now.In(r.loc).Format("15:04:05"), r.cfg.Scan.ChartBaseURL, r.cfg.Scan.MinFirst15VolumeFilter, time.Now().In(r.loc), rows)
+	state.Kane = kaneState(r.items, r.barsBySymbol, now, r.loc, r.cfg.Scan.ChartBaseURL)
+	return state
 }
 
 func (r *ReplayRunner) virtualNow() time.Time {
