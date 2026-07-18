@@ -281,6 +281,7 @@ main {
 .kane-snapshot-controls { display: flex; gap: 3px; order: 0; white-space: nowrap; }
 .kane-snapshot-controls button { padding: 6px 7px; }
 .kane-snapshot-controls button.active { color: var(--text); border-color: var(--blue); background: #263140; }
+.kane-snapshot-controls .kane-forward-minute { margin-left: 5px; padding-inline: 11px; color: #fff; border-color: var(--blue); background: #174b75; font-weight: 900; }
 .kane-volume-controls { display: flex; align-items: center; gap: 6px; white-space: nowrap; order: 1; }
 .kane-controls .sound-controls { order: 2; display: flex; gap: 4px; white-space: nowrap; }
 .kane-alert-note { order: 3; white-space: nowrap; }
@@ -314,6 +315,15 @@ main {
 .industry-panel div div { display: flex; gap: 8px; justify-content: space-between; padding: 7px 4px; border-bottom: 1px solid var(--line-soft); }
 .industry-panel span { white-space: normal; color: var(--muted); }
 .industry-panel strong { color: var(--text); }
+.industry-panel .industry-row { align-items: center; }
+.industry-panel .industry-row { cursor: pointer; border-left: 3px solid transparent; padding-left: 7px; }
+.industry-panel .industry-row:hover { background: #18212d; }
+.industry-panel .industry-row.selected { color: var(--text); background: #263140; border-left-color: var(--blue); }
+.industry-panel .industry-counts { display: grid; grid-template-columns: 46px 46px 28px; gap: 4px; align-items: center; flex: 0 0 auto; padding: 0; border: 0; white-space: nowrap; text-align: center; }
+.industry-counts b, .industry-counts strong { padding: 3px 4px; border-radius: 4px; font-size: 12px; }
+.industry-counts .industry-up { color: #70e0bd; background: var(--buy-soft); border: 1px solid var(--buy-line); }
+.industry-counts .industry-down { color: #ff9b62; background: var(--sell-soft); border: 1px solid var(--sell-line); }
+.industry-counts strong { background: var(--band); border: 1px solid var(--line); }
 
 th.sortable { cursor: pointer; user-select: none; }
 th.sortable::after { content: ' ↕'; color: #566170; }

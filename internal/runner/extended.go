@@ -87,6 +87,7 @@ func (r *LiveRunner) extendedRowsAt(cutoff time.Time, dataStart time.Time, volum
 		}
 		volume := 0.0
 		priorClose := 0.0
+		priorHigh, priorLow, openingPrice := 0.0, 0.0, 0.0
 		for _, bar := range bars {
 			bt := bar.Time.In(r.loc)
 			if !bt.Before(volumeStart) && !bt.After(cutoff) {
@@ -94,26 +95,57 @@ func (r *LiveRunner) extendedRowsAt(cutoff time.Time, dataStart time.Time, volum
 			}
 			if bt.Before(volumeStart) && bt.Hour() >= 9 && (bt.Hour() > 9 || bt.Minute() >= 30) && bt.Hour() < 16 {
 				priorClose = bar.Close
+				if bar.High > priorHigh {
+					priorHigh = bar.High
+				}
+				if priorLow == 0 || bar.Low < priorLow {
+					priorLow = bar.Low
+				}
+			}
+			if bt.Format("2006-01-02") == cutoff.Format("2006-01-02") && bt.Hour() == 9 && bt.Minute() == 30 && openingPrice == 0 {
+				openingPrice = bar.Open
 			}
 		}
 		changePct := 0.0
 		if priorClose > 0 {
 			changePct = price/priorClose - 1
 		}
+		gapPrice := openingPrice
+		if gapPrice == 0 {
+			gapPrice = price
+		}
+		openGapPct, gapATR, priorCloseLocation := 0.0, 0.0, 0.0
+		if priorClose > 0 {
+			openGapPct = gapPrice/priorClose - 1
+		}
+		if item.ATR14 > 0 {
+			gapATR = (gapPrice - priorClose) / item.ATR14
+		}
+		if priorHigh > priorLow {
+			priorCloseLocation = (priorClose - priorLow) / (priorHigh - priorLow)
+		}
+		kaneFit := "—"
+		if openGapPct <= -.10 && openGapPct >= -.25 && -gapATR >= 1.5 && -gapATR <= 2.5 && gapPrice >= 3 {
+			kaneFit = "Gap-down"
+		}
+		if openGapPct >= .18 && openGapPct <= .35 && gapPrice >= 10 && gapPrice <= 50 {
+			kaneFit = "Gap-up"
+		}
 		rows = append(rows, dashboard.ExtendedRow{
-			Symbol:    item.Symbol,
-			Name:      item.Name,
-			Industry:  item.Industry,
-			Order:     item.Order,
-			Price:     price,
-			Average:   average,
-			Ratio:     ratio,
-			DeltaPct:  ratio - 1,
-			ChangePct: changePct,
-			Volume:    volume,
-			Side:      side,
-			Clock:     cutoff.Format("15:04"),
-			ChartURL:  chartURL(r.cfg.Scan.ChartBaseURL, item.Symbol, cutoff.Format("2006-01-02"), cutoff.Format("1504"), side),
+			Symbol:     item.Symbol,
+			Name:       item.Name,
+			Industry:   item.Industry,
+			Order:      item.Order,
+			Price:      price,
+			Average:    average,
+			Ratio:      ratio,
+			DeltaPct:   ratio - 1,
+			ChangePct:  changePct,
+			Volume:     volume,
+			Side:       side,
+			Clock:      cutoff.Format("15:04"),
+			ChartURL:   chartURL(r.cfg.Scan.ChartBaseURL, item.Symbol, cutoff.Format("2006-01-02"), cutoff.Format("1504"), side),
+			OpenGapPct: openGapPct, GapATR: gapATR, PriorCloseLocation: priorCloseLocation, KaneFit: kaneFit,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {

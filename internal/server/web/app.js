@@ -14,6 +14,7 @@ const state = {
   view: 'playbook',
   extended: null,
   extendedQuery: '',
+  extendedIndustry: '',
   extendedFollowLive: true,
   extendedSelectedID: 0,
   extendedSymbols: null,
@@ -63,6 +64,7 @@ const el = {
   extendedNextHit: document.getElementById('extendedNextHit'),
   extendedForward: document.getElementById('extendedForward'),
   extendedLive: document.getElementById('extendedLive'),
+  extendedForwardMinute: document.getElementById('extendedForwardMinute'),
   extendedStatus: document.getElementById('extendedStatus'),
   soundToggle: document.getElementById('soundToggle'),
   soundMute: document.getElementById('soundMute'),
@@ -72,6 +74,7 @@ const el = {
   kaneSoundToggle: document.getElementById('kaneSoundToggle'), kaneSoundMute: document.getElementById('kaneSoundMute'),
   kaneVolumeFilter: document.getElementById('kaneVolumeFilter'), kaneVolumePresets: document.getElementById('kaneVolumePresets'),
   kaneSnapshotControls: document.getElementById('kaneSnapshotControls'),
+  kaneForwardMinute: document.getElementById('kaneForwardMinute'),
 };
 
 document.querySelector('.extended-table thead').addEventListener('click', (event) => {
@@ -93,6 +96,11 @@ el.extendedSearch.addEventListener('input', () => {
   state.extendedQuery = el.extendedSearch.value.trim().toUpperCase();
   renderExtended();
 });
+el.extendedIndustries.addEventListener('click', (event) => {
+  const row = event.target.closest('[data-industry]'); if (!row) return;
+  state.extendedIndustry = state.extendedIndustry === row.dataset.industry ? '' : row.dataset.industry;
+  renderExtended();
+});
 
 el.extendedBack.addEventListener('click', () => moveExtended(-1, false));
 el.extendedForward.addEventListener('click', () => moveExtended(1, false));
@@ -104,6 +112,10 @@ el.extendedLive.addEventListener('click', async () => {
   state.extendedOrder = [];
   state.extendedOrderSnapshot = 0;
   await refreshExtended();
+});
+el.extendedForwardMinute.addEventListener('click', async () => {
+  if (!state.isReplay) return;
+  await replayStep(1); await refreshExtended();
 });
 
 el.soundToggle.addEventListener('click', () => {
@@ -140,6 +152,11 @@ el.kaneVolumePresets.addEventListener('click', (event) => {
 el.kaneSnapshotControls.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-clock]'); if (!button || button.disabled) return;
   state.kaneSelectedClock = button.dataset.clock; renderKane(selectedKaneState()); updateKaneSnapshotControls();
+});
+el.kaneForwardMinute.addEventListener('click', async () => {
+  if (!state.isReplay) return;
+  state.kaneSelectedClock = 'live'; updateKaneSnapshotControls();
+  await replayStep(1);
 });
 
 el.search.addEventListener('input', () => {
@@ -269,7 +286,8 @@ function setReplayBusy(busy) {
 
 function applyPayload(payload) {
   state.isReplay = payload.mode === 'replay';
-  const extendedAvailable = payload.mode === 'live';
+  el.kaneForwardMinute.disabled = !state.isReplay;
+  const extendedAvailable = payload.mode === 'live' || payload.mode === 'replay';
   state.rows = payload.rows || [];
   renderKane(payload.kane || {});
   updateKaneSnapshotControls();
@@ -277,6 +295,7 @@ function applyPayload(payload) {
   state.volumeFilter = Number(payload.volume_filter || 0);
   document.body.classList.toggle('replay-mode', state.isReplay);
   el.extendedTab.hidden = !extendedAvailable;
+  el.extendedForwardMinute.hidden = !state.isReplay;
   if (!extendedAvailable && state.view === 'extended') selectView('playbook');
   el.project.textContent = payload.project || '0945-playbook';
   el.mode.textContent = payload.mode || 'mode';
@@ -294,7 +313,6 @@ function applyPayload(payload) {
 }
 
 function selectView(view) {
-  if (view === 'extended' && state.isReplay) return;
   state.view = view;
   const extended = view === 'extended'; const kane = view === 'kane';
   document.body.classList.toggle('extended-mode', extended);
@@ -310,6 +328,7 @@ function selectView(view) {
   if (extended) {
     renderExtended();
     updateExtendedStatus();
+    refreshExtended();
   } else if (kane) {
     renderKane((state.livePayload && state.livePayload.kane) || {});
   } else if (state.livePayload) {
@@ -382,7 +401,7 @@ function updateKaneSoundControls() {
 }
 
 async function refreshExtended(selectedID = 0) {
-  if (!state.livePayload || state.livePayload.mode !== 'live') return;
+  if (!state.livePayload || (state.livePayload.mode !== 'live' && state.livePayload.mode !== 'replay')) return;
   const requestedID = selectedID || (!state.extendedFollowLive ? state.extendedSelectedID : 0);
   try {
     const response = await fetch('/api/extended', { cache: 'no-store' });
@@ -466,12 +485,12 @@ function renderExtended() {
     if (!known.has(row.symbol)) state.extendedOrder.push(row.symbol);
   }
   const bySymbol = new Map(candidates.map((row) => [row.symbol, row]));
-  const rows = state.extendedOrder
+  let rows = state.extendedOrder
     .map((symbol) => bySymbol.get(symbol))
     .filter((row) => !state.extendedQuery || row.symbol.includes(state.extendedQuery));
   const { key, direction } = state.extendedSort;
   rows.sort((a, b) => {
-    const stringSort = key === 'symbol' || key === 'clock' || key === 'industry';
+    const stringSort = key === 'symbol' || key === 'clock' || key === 'industry' || key === 'kane_fit';
     const av = stringSort ? String(a[key] || '') : Number(a[key] || 0);
     const bv = stringSort ? String(b[key] || '') : Number(b[key] || 0);
     const result = typeof av === 'string' ? av.localeCompare(bv) : av - bv;
@@ -484,15 +503,20 @@ function renderExtended() {
   const industries = new Map();
   for (const row of rows) {
     const industry = row.industry || 'Unknown';
-    industries.set(industry, (industries.get(industry) || 0) + 1);
+    const counts = industries.get(industry) || { total: 0, up: 0, down: 0 };
+    counts.total += 1;
+    if (row.side > 0) counts.up += 1;
+    if (row.side < 0) counts.down += 1;
+    industries.set(industry, counts);
   }
   const industryHTML = [...industries.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([industry, count]) => `<div><span>${escapeHTML(industry)}</span><strong>${count}</strong></div>`).join('');
+    .sort((a, b) => b[1].total - a[1].total || a[0].localeCompare(b[0]))
+    .map(([industry, counts]) => `<div class="industry-row${state.extendedIndustry === industry ? ' selected' : ''}" data-industry="${escapeHTML(industry)}" role="button" title="${state.extendedIndustry === industry ? 'Clear industry filter' : `Show only ${escapeHTML(industry)}`}"><span>${escapeHTML(industry)}</span><span class="industry-counts"><b class="industry-up" title="C/Avg above upper threshold">↑ ${counts.up}</b><b class="industry-down" title="C/Avg below lower threshold">↓ ${counts.down}</b><strong title="Total matches">${counts.total}</strong></span></div>`).join('');
   setHTMLIfChanged(el.extendedIndustries, industryHTML || '<p>No matching groups</p>', 'renderedIndustries');
-  const summaryHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches</strong>
+  if (state.extendedIndustry) rows = rows.filter((row) => (row.industry || 'Unknown') === state.extendedIndustry);
+  const summaryHTML = `<strong>${snapshot.rows ? snapshot.rows.length : 0} matches${state.extendedIndustry ? ` · ${rows.length} shown` : ''}</strong>
     <span>C/Avg${n} &lt; ${Number(payload.lower_signal_ratio).toFixed(2)} or &gt; ${Number(payload.upper_signal_ratio).toFixed(2)}</span>
-    <span>${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET</span>`;
+    <span>${state.extendedIndustry ? `Industry: ${escapeHTML(state.extendedIndustry)} · ` : ''}${escapeHTML(payload.window_start)}–${escapeHTML(payload.window_end)} ET${state.isReplay ? ' · replay minute' : ''}</span>`;
   setHTMLIfChanged(el.extendedSummary, summaryHTML, 'renderedExtendedSummary');
   reconcileRows(el.extendedRows, rows.map((row) => {
     const sideClass = row.side < 0 ? 'side-short' : 'side-long';
@@ -506,6 +530,10 @@ function renderExtended() {
       <td class="${ratioDeltaClass}">${pct(row.delta_pct)}</td>
       <td>${escapeHTML(row.clock)}</td>
       <td>${compact(row.volume)}</td>
+      <td class="${row.open_gap_pct > 0 ? 'pos' : row.open_gap_pct < 0 ? 'neg' : 'muted'}">${pct(row.open_gap_pct)}</td>
+      <td>${Number(row.gap_atr || 0).toFixed(2)}×</td>
+      <td>${pct(row.prior_close_location)}</td>
+      <td>${escapeHTML(row.kane_fit || '—')}</td>
       <td class="note">${escapeHTML(row.industry)}</td>
     </tr>`;
   }));

@@ -65,19 +65,23 @@ type KaneSnapshot struct {
 }
 
 type ExtendedRow struct {
-	Symbol    string  `json:"symbol"`
-	Name      string  `json:"name"`
-	Industry  string  `json:"industry"`
-	Order     int     `json:"order"`
-	Price     float64 `json:"price"`
-	Average   float64 `json:"average"`
-	Ratio     float64 `json:"ratio"`
-	DeltaPct  float64 `json:"delta_pct"`
-	ChangePct float64 `json:"change_pct"`
-	Volume    float64 `json:"volume"`
-	Side      int     `json:"side"`
-	Clock     string  `json:"clock"`
-	ChartURL  string  `json:"chart_url"`
+	Symbol             string  `json:"symbol"`
+	Name               string  `json:"name"`
+	Industry           string  `json:"industry"`
+	Order              int     `json:"order"`
+	Price              float64 `json:"price"`
+	Average            float64 `json:"average"`
+	Ratio              float64 `json:"ratio"`
+	DeltaPct           float64 `json:"delta_pct"`
+	ChangePct          float64 `json:"change_pct"`
+	Volume             float64 `json:"volume"`
+	Side               int     `json:"side"`
+	Clock              string  `json:"clock"`
+	ChartURL           string  `json:"chart_url"`
+	OpenGapPct         float64 `json:"open_gap_pct"`
+	GapATR             float64 `json:"gap_atr"`
+	PriorCloseLocation float64 `json:"prior_close_location"`
+	KaneFit            string  `json:"kane_fit"`
 }
 
 type ExtendedSnapshot struct {

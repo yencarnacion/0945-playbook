@@ -41,6 +41,7 @@
           <button id="extendedNextHit" title="Next minute with matches">Hit →</button>
           <button id="extendedForward" title="Next minute">1m →</button>
           <button id="extendedLive" title="Return to current scan">LIVE</button>
+          <button id="extendedForwardMinute" title="Advance replay one minute">+1 MIN →</button>
         </div>
         <div class="sound-controls">
           <button id="soundToggle">Start sound</button>
@@ -51,6 +52,7 @@
       <div class="controls kane-controls" id="kaneControls" hidden>
         <div class="kane-snapshot-controls" id="kaneSnapshotControls">
           <button data-clock="09:25">09:25</button><button data-clock="09:26">09:26</button><button data-clock="09:27">09:27</button><button data-clock="09:28">09:28</button><button data-clock="09:29">09:29</button><button data-clock="09:30">09:30</button><button data-clock="live" class="active">LIVE</button>
+          <button id="kaneForwardMinute" class="kane-forward-minute" title="Advance replay one minute">+1 MIN →</button>
         </div>
         <div class="kane-volume-controls">
           <label for="kaneVolumeFilter">Min vol 04:00+</label>
@@ -119,6 +121,10 @@
               <th class="sortable" data-sort="delta_pct">Delta</th>
               <th class="sortable" data-sort="clock">Minute</th>
               <th class="sortable" data-sort="volume">Vol Since 04:00</th>
+              <th class="sortable" data-sort="open_gap_pct">Open Gap</th>
+              <th class="sortable" data-sort="gap_atr">Gap/ATR</th>
+              <th class="sortable" data-sort="prior_close_location">Prior Close Pos.</th>
+              <th class="sortable" data-sort="kane_fit">Kane Fit</th>
               <th class="note sortable" data-sort="industry">Industry</th>
             </tr>
           </thead>

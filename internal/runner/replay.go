@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -189,6 +190,18 @@ func (r *ReplayRunner) snapshotAt(now time.Time) dashboard.State {
 	state := dashboard.Build(r.project, r.mode, now.In(r.loc).Format("15:04:05"), r.cfg.Scan.ChartBaseURL, r.cfg.Scan.MinFirst15VolumeFilter, time.Now().In(r.loc), rows)
 	state.Kane = kaneState(r.items, r.barsBySymbol, now, r.loc, r.cfg.Scan.ChartBaseURL)
 	return state
+}
+
+func (r *ReplayRunner) ExtendedSnapshot(_ context.Context, _ int64) dashboard.ExtendedState {
+	now := r.currentTime().In(r.loc).Truncate(time.Minute)
+	start := sessionClock(now, r.loc, r.cfg.Extended.Start)
+	live := &LiveRunner{cfg: r.cfg, loc: r.loc, items: r.items, barsBySymbol: r.barsBySymbol}
+	snapshot := dashboard.ExtendedSnapshot{ID: now.Unix() / 60, Clock: now.Format("15:04"), Updated: time.Now().Format(time.RFC3339), Rows: live.extendedRowsAt(now, start, start)}
+	return dashboard.ExtendedState{Available: true, WindowStart: r.cfg.Extended.Start, WindowEnd: r.cfg.Extended.End, AvgCloseBars: r.cfg.Extended.AvgCloseBars, UpperSignalRatio: r.cfg.Extended.UpperSignalRatio, LowerSignalRatio: r.cfg.Extended.LowerSignalRatio, SoundURL: "/api/extended/sound", LiveID: snapshot.ID, Selected: snapshot, History: []dashboard.ExtendedHistoryPoint{{ID: snapshot.ID, Clock: snapshot.Clock, Count: len(snapshot.Rows)}}}
+}
+
+func (r *ReplayRunner) AlertSoundPath() string {
+	return filepath.Join(r.cfg.Extended.SoundDir, r.cfg.Extended.SoundFile)
 }
 
 func (r *ReplayRunner) virtualNow() time.Time {
