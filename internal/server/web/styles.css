@@ -278,6 +278,9 @@ main {
 }
 
 .kane-controls { display: flex; justify-content: flex-end; align-items: center; gap: 12px; min-width: 0; }
+.kane-snapshot-controls { display: flex; gap: 3px; order: 0; white-space: nowrap; }
+.kane-snapshot-controls button { padding: 6px 7px; }
+.kane-snapshot-controls button.active { color: var(--text); border-color: var(--blue); background: #263140; }
 .kane-volume-controls { display: flex; align-items: center; gap: 6px; white-space: nowrap; order: 1; }
 .kane-controls .sound-controls { order: 2; display: flex; gap: 4px; white-space: nowrap; }
 .kane-alert-note { order: 3; white-space: nowrap; }
@@ -288,6 +291,10 @@ main {
 @media (max-width: 1100px) {
   .kane-alert-note { display: none; }
   .kane-volume-controls label { display: none; }
+}
+
+@media (max-width: 1450px) {
+  .kane-alert-note { display: none; }
 }
 
 .extended-content {

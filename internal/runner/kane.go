@@ -12,6 +12,21 @@ import (
 // kaneState applies the frozen, out-of-sample rules documented in local/kane.txt.
 // Sample EV is descriptive research evidence, not a forecast for this ticker.
 func kaneState(items []watchlist.Item, barsBySymbol map[string][]data.Bar, now time.Time, loc *time.Location, chartBase string) dashboard.KaneState {
+	rows, prelim := kaneRows(items, barsBySymbol, now, loc, chartBase)
+	state := dashboard.KaneState{Available: true, Preliminary: prelim, Rows: rows}
+	day := now.In(loc)
+	for minute := 25; minute <= 30; minute++ {
+		stamp := time.Date(day.Year(), day.Month(), day.Day(), 9, minute, 0, 0, loc)
+		if stamp.After(now) {
+			continue
+		}
+		snapshotRows, snapshotPrelim := kaneRows(items, barsBySymbol, stamp, loc, chartBase)
+		state.History = append(state.History, dashboard.KaneSnapshot{Clock: stamp.Format("15:04"), Preliminary: snapshotPrelim, Rows: snapshotRows})
+	}
+	return state
+}
+
+func kaneRows(items []watchlist.Item, barsBySymbol map[string][]data.Bar, now time.Time, loc *time.Location, chartBase string) ([]dashboard.KaneRow, bool) {
 	openTime := sessionClock(now, loc, "09:30")
 	prelim := now.Before(openTime)
 	down, up := []dashboard.KaneRow{}, []dashboard.KaneRow{}
@@ -91,5 +106,5 @@ func kaneState(items []watchlist.Item, barsBySymbol map[string][]data.Bar, now t
 		up[i].Preferred = i == 0
 	}
 	rows := append(down, up...)
-	return dashboard.KaneState{Available: true, Preliminary: prelim, Rows: rows}
+	return rows, prelim
 }

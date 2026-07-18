@@ -23,6 +23,7 @@ const state = {
   kaneSoundEnabled: false, kaneSoundMuted: false, kaneSymbols: null,
   kaneSound: null,
   kaneVolumeFilter: 100000,
+  kaneSelectedClock: 'live',
   refreshing: false,
   stripOrder: [],
   extendedOrder: [],
@@ -70,6 +71,7 @@ const el = {
   kaneView: document.getElementById('kaneView'), kaneRows: document.getElementById('kaneRows'), kaneSummary: document.getElementById('kaneSummary'), kaneControls: document.getElementById('kaneControls'),
   kaneSoundToggle: document.getElementById('kaneSoundToggle'), kaneSoundMute: document.getElementById('kaneSoundMute'),
   kaneVolumeFilter: document.getElementById('kaneVolumeFilter'), kaneVolumePresets: document.getElementById('kaneVolumePresets'),
+  kaneSnapshotControls: document.getElementById('kaneSnapshotControls'),
 };
 
 document.querySelector('.extended-table thead').addEventListener('click', (event) => {
@@ -134,6 +136,10 @@ el.kaneVolumePresets.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-volume]'); if (!button) return;
   state.kaneVolumeFilter = Number(button.dataset.volume); el.kaneVolumeFilter.value = String(state.kaneVolumeFilter);
   updateKaneVolumePresets(); syncKaneSymbols(); renderKane((state.livePayload && state.livePayload.kane) || {});
+});
+el.kaneSnapshotControls.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-clock]'); if (!button || button.disabled) return;
+  state.kaneSelectedClock = button.dataset.clock; renderKane(selectedKaneState()); updateKaneSnapshotControls();
 });
 
 el.search.addEventListener('input', () => {
@@ -266,6 +272,7 @@ function applyPayload(payload) {
   const extendedAvailable = payload.mode === 'live';
   state.rows = payload.rows || [];
   renderKane(payload.kane || {});
+  updateKaneSnapshotControls();
   detectKaneEntries(payload.kane || {});
   state.volumeFilter = Number(payload.volume_filter || 0);
   document.body.classList.toggle('replay-mode', state.isReplay);
@@ -311,6 +318,7 @@ function selectView(view) {
 }
 
 function renderKane(kane) {
+  if (kane === (state.livePayload && state.livePayload.kane)) kane = selectedKaneState();
   const allRows = kane.rows || [];
   const rows = allRows.filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter);
   const preferredSymbols = new Set();
@@ -329,6 +337,22 @@ function renderKane(kane) {
     <td>${escapeHTML(row.setup)}</td><td class="${row.gap_pct < 0 ? 'neg' : 'pos'}">${pct(row.gap_pct)}</td><td>${Number(row.gap_atr || 0).toFixed(2)}×</td><td>${money(row.price)}</td><td>${compact(row.volume_from_0400)}</td>
     <td>${pct(row.prior_close_location)}</td><td>${pct(row.sample_ev)}</td><td>${pct(row.win_rate)}</td><td>${pct(row.target_pct)} / ${pct(row.stop_pct)} stop</td><td class="note">${escapeHTML(row.reason)}</td></tr>`;
   }));
+}
+
+function selectedKaneState() {
+  const live = (state.livePayload && state.livePayload.kane) || {};
+  if (state.kaneSelectedClock === 'live') return live;
+  const snapshot = (live.history || []).find((point) => point.clock === state.kaneSelectedClock);
+  return snapshot || live;
+}
+
+function updateKaneSnapshotControls() {
+  const history = ((state.livePayload && state.livePayload.kane && state.livePayload.kane.history) || []);
+  const available = new Set(history.map((point) => point.clock));
+  for (const button of el.kaneSnapshotControls.querySelectorAll('button[data-clock]')) {
+    const live = button.dataset.clock === 'live'; button.disabled = !live && !available.has(button.dataset.clock);
+    button.classList.toggle('active', button.dataset.clock === state.kaneSelectedClock);
+  }
 }
 
 function detectKaneEntries(kane) {

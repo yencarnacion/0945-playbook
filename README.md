@@ -40,6 +40,7 @@ Live mode polls Massive aggregate bars using the official Go client dependency. 
 - KaneScan includes cumulative traded volume from 04:00 through the displayed live or replay timestamp. Downloads cache data beginning at 04:00 so the value is reproducible in replay.
 - KaneScan defaults to showing candidates with at least 100K volume since 04:00. The header provides an immediately editable numeric threshold plus ALL, 100K, 250K, and 500K presets; KaneScan sound alerts respect this filter.
 - Preferred markers are selected from the currently visible candidates: the highest research-ranked name remaining in each strategy becomes `PREFERRED ON SCREEN` when the volume threshold changes.
+- KaneScan freezes reproducible snapshots at 09:25, 09:26, 09:27, 09:28, 09:29, and 09:30. Timestamp buttons revisit them without stopping the current scan; `LIVE` returns to the continuously updating post-09:30 view.
 - Sound is opt-in and independently controllable on `C/Avg Live` and `KaneScan`; `hey.mp3` plays only when a new symbol enters an enabled scan.
 - Configure the extended scanner under `extended_scan`. `avg_close_bars` controls its rolling length independently of the 09:45 playbook, and `sound_dir` plus `sound_file` select the alert audio (default `sounds/hey.mp3`).
 - `scan.max_symbols: 0` means use the entire CSV watchlist, regardless of the file name.

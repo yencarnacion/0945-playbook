@@ -52,7 +52,14 @@ type KaneRow struct {
 	ChartURL           string  `json:"chart_url"`
 }
 type KaneState struct {
-	Available   bool      `json:"available"`
+	Available   bool           `json:"available"`
+	Preliminary bool           `json:"preliminary"`
+	Rows        []KaneRow      `json:"rows"`
+	History     []KaneSnapshot `json:"history"`
+}
+
+type KaneSnapshot struct {
+	Clock       string    `json:"clock"`
 	Preliminary bool      `json:"preliminary"`
 	Rows        []KaneRow `json:"rows"`
 }
