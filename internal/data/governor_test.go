@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -34,5 +35,17 @@ func TestGovernorHonorsCancellation(t *testing.T) {
 	err := g.Do(ctx, func(context.Context) error { return nil })
 	if err == nil {
 		t.Fatal("expected cancellation")
+	}
+}
+func TestGovernorCircuitBreakerStopsRetryStorm(t *testing.T) {
+	g := NewGovernor(100, 2, 0)
+	defer g.Close()
+	for i := 0; i < 5; i++ {
+		_ = g.Do(context.Background(), func(context.Context) error { return &HTTPError{Status: 503} })
+	}
+	var called atomic.Int32
+	err := g.Do(context.Background(), func(context.Context) error { called.Add(1); return nil })
+	if !errors.Is(err, ErrCircuitOpen) || called.Load() != 0 {
+		t.Fatalf("err=%v called=%d", err, called.Load())
 	}
 }

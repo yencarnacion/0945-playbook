@@ -31,7 +31,12 @@ type Governor struct {
 	stop                                        chan struct{}
 	once                                        sync.Once
 	requests, retry, tooMany, backoff, inflight atomic.Uint64
+	circuitMu                                   sync.Mutex
+	consecutiveFailures                         int
+	openUntil                                   time.Time
 }
+
+var ErrCircuitOpen = errors.New("REST circuit open")
 
 type GovernedProvider struct {
 	provider Provider
@@ -82,6 +87,12 @@ func NewGovernor(rate, concurrency, retries int) *Governor {
 }
 func (g *Governor) Close() { g.once.Do(func() { close(g.stop) }) }
 func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error {
+	g.circuitMu.Lock()
+	if time.Now().Before(g.openUntil) {
+		g.circuitMu.Unlock()
+		return ErrCircuitOpen
+	}
+	g.circuitMu.Unlock()
 	var err error
 	for attempt := 0; attempt <= g.retries; attempt++ {
 		if attempt > 0 {
@@ -116,6 +127,10 @@ func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error
 		g.inflight.Add(^uint64(0))
 		<-g.sem
 		if err == nil {
+			g.circuitMu.Lock()
+			g.consecutiveFailures = 0
+			g.openUntil = time.Time{}
+			g.circuitMu.Unlock()
 			return nil
 		}
 		he := new(HTTPError)
@@ -125,6 +140,12 @@ func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error
 		if he.Status == 429 {
 			g.tooMany.Add(1)
 		}
+		g.circuitMu.Lock()
+		g.consecutiveFailures++
+		if g.consecutiveFailures >= 5 {
+			g.openUntil = time.Now().Add(30 * time.Second)
+		}
+		g.circuitMu.Unlock()
 	}
 	return err
 }

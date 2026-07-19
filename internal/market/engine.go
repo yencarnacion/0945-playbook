@@ -29,6 +29,9 @@ type SymbolSnapshot struct {
 	LastEvent                                              time.Time `json:"last_event"`
 	LastReceipt                                            time.Time `json:"last_receipt"`
 	Warm                                                   bool      `json:"warm"`
+	Gap                                                    bool      `json:"gap"`
+	GapStart                                               time.Time `json:"gap_start,omitempty"`
+	GapEnd                                                 time.Time `json:"gap_end,omitempty"`
 }
 
 type Metrics struct {
@@ -50,8 +53,11 @@ type symbolState struct {
 	bars                                                    []data.Bar
 	barLast                                                 map[int64]time.Time
 	seen                                                    map[string]struct{}
+	seenOrder                                               []string
 	lastEvent, lastReceipt                                  time.Time
 	price, sessionVolume, premarketVolume, high, low, pv, v float64
+	gap                                                     bool
+	gapStart, gapEnd                                        time.Time
 }
 
 type Engine struct {
@@ -101,6 +107,17 @@ func (e *Engine) Offer(ev Event) bool {
 		return true
 	default:
 		e.dropped.Add(1)
+		if s := e.symbols[strings.ToUpper(ev.Symbol)]; s != nil {
+			s.mu.Lock()
+			s.gap = true
+			if s.gapStart.IsZero() || ev.Start.Before(s.gapStart) {
+				s.gapStart = ev.Start
+			}
+			if ev.End.After(s.gapEnd) {
+				s.gapEnd = ev.End
+			}
+			s.mu.Unlock()
+		}
 		return false
 	}
 }
@@ -131,8 +148,11 @@ func (e *Engine) apply(ev Event) {
 		return
 	}
 	s.seen[key] = struct{}{}
-	if len(s.seen) > 10000 {
-		s.seen = map[string]struct{}{key: {}}
+	s.seenOrder = append(s.seenOrder, key)
+	if len(s.seenOrder) > 256 {
+		old := s.seenOrder[0]
+		s.seenOrder = s.seenOrder[1:]
+		delete(s.seen, old)
 	}
 	if !s.lastEvent.IsZero() && ev.End.Before(s.lastEvent) {
 		e.outOfOrder.Add(1)
@@ -204,7 +224,7 @@ func (e *Engine) Snapshot(symbol string, avgN int) (SymbolSnapshot, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	o := SymbolSnapshot{Symbol: symbol, Bars: append([]data.Bar(nil), s.bars...), Price: s.price, SessionVolume: s.sessionVolume, PremarketVolume: s.premarketVolume, High: s.high, Low: s.low, LastEvent: s.lastEvent, LastReceipt: s.lastReceipt}
+	o := SymbolSnapshot{Symbol: symbol, Bars: append([]data.Bar(nil), s.bars...), Price: s.price, SessionVolume: s.sessionVolume, PremarketVolume: s.premarketVolume, High: s.high, Low: s.low, LastEvent: s.lastEvent, LastReceipt: s.lastReceipt, Gap: s.gap, GapStart: s.gapStart, GapEnd: s.gapEnd}
 	if s.v > 0 {
 		o.VWAP = s.pv / s.v
 	}
@@ -245,6 +265,44 @@ func (e *Engine) Seed(symbol string, bars []data.Bar) {
 		s.bars = s.bars[len(s.bars)-3000:]
 	}
 	s.mu.Unlock()
+}
+
+func (e *Engine) MarkAllGap(start, end time.Time) {
+	for _, s := range e.symbols {
+		s.mu.Lock()
+		s.gap = true
+		if s.gapStart.IsZero() || start.Before(s.gapStart) {
+			s.gapStart = start
+		}
+		if end.After(s.gapEnd) {
+			s.gapEnd = end
+		}
+		s.mu.Unlock()
+	}
+}
+func (e *Engine) ResolveGap(symbol string, bars []data.Bar) bool {
+	s := e.symbols[strings.ToUpper(symbol)]
+	if s == nil || len(bars) == 0 {
+		return false
+	}
+	e.Seed(symbol, bars)
+	s.mu.Lock()
+	s.gap = false
+	s.gapStart = time.Time{}
+	s.gapEnd = time.Time{}
+	s.mu.Unlock()
+	return true
+}
+func (e *Engine) GapCount() int {
+	n := 0
+	for _, s := range e.symbols {
+		s.mu.RLock()
+		if s.gap {
+			n++
+		}
+		s.mu.RUnlock()
+	}
+	return n
 }
 
 func (e *Engine) Metrics() Metrics {

@@ -33,6 +33,8 @@ const state = {
   renderedStats: '',
   renderedExtendedSummary: '',
   eventSource: null,
+  generations: { playbook: 0, cavg: 0, kane: 0 },
+  browserMetrics: { messages: 0, parseMS: [], mergeMS: [], renderMS: [], resyncs: 0 },
 };
 
 const el = {
@@ -252,17 +254,23 @@ async function refresh() {
 function connectEvents() {
   if (state.isReplay || state.eventSource) return;
   const source = new EventSource('/api/events'); state.eventSource = source;
-  source.onmessage = (message) => requestAnimationFrame(() => {
-    const delta = JSON.parse(message.data);
-    if (delta.full) { state.livePayload = delta.full; applyPayload(delta.full); return; }
+  source.onmessage = (message) => { const received=performance.now();const parseStart=performance.now();const delta = JSON.parse(message.data);state.browserMetrics.parseMS.push(performance.now()-parseStart);state.browserMetrics.messages++;
+    if(delta.type==='resync_required'){state.browserMetrics.resyncs++;source.close();state.eventSource=null;refresh().then(connectEvents);return}
+    requestAnimationFrame(() => { const mergeStart=performance.now();
+    if (delta.full) { if(delta.playbook_generation<state.generations.playbook)return;state.generations={playbook:delta.playbook_generation||0,cavg:delta.cavg_generation||0,kane:delta.kane_generation||0};state.livePayload = delta.full;state.extended=delta.full.cavg||state.extended;applyPayload(delta.full);requestAnimationFrame(()=>{document.body.dataset.lastRender=String(Date.now());document.body.dataset.playbookGeneration=String(state.generations.playbook);document.body.dataset.cavgGeneration=String(state.generations.cavg);document.body.dataset.kaneGeneration=String(state.generations.kane)});return; }
     if (!state.livePayload) return;
+    if(delta.playbook_generation<=state.generations.playbook)return;
+    if(delta.playbook_base_generation!==state.generations.playbook){state.browserMetrics.resyncs++;source.close();state.eventSource=null;refresh().then(connectEvents);return}
     const bySymbol = new Map((state.livePayload.rows || []).map((row) => [row.symbol, row]));
     for (const row of delta.rows || []) bySymbol.set(row.symbol, row);
     state.livePayload.rows = [...bySymbol.values()]; state.livePayload.stats = delta.stats || state.livePayload.stats;
     state.livePayload.generation = delta.generation; state.livePayload.published_at = delta.published_at;
-    applyPayload(state.livePayload);
-  });
-  source.onerror = () => { el.updated.textContent = `reconnecting ${new Date().toLocaleTimeString()}`; };
+    state.generations.playbook=delta.playbook_generation;
+    if(delta.cavg&&delta.cavg_generation>state.generations.cavg){if(delta.cavg_base_generation!==state.generations.cavg){state.browserMetrics.resyncs++;source.close();state.eventSource=null;refresh().then(connectEvents);return};detectExtendedAdditions((delta.cavg.selected&&delta.cavg.selected.rows)||[]);state.extended=delta.cavg;state.generations.cavg=delta.cavg_generation;if(state.view==='extended')renderExtended()}
+    if(delta.kane&&delta.kane_generation>state.generations.kane){if(delta.kane_base_generation!==state.generations.kane){state.browserMetrics.resyncs++;source.close();state.eventSource=null;refresh().then(connectEvents);return};state.livePayload.kane=delta.kane;state.generations.kane=delta.kane_generation}
+    state.browserMetrics.mergeMS.push(performance.now()-mergeStart);applyPayload(state.livePayload);requestAnimationFrame(()=>{state.browserMetrics.renderMS.push(performance.now()-received);document.body.dataset.lastRender=String(Date.now());document.body.dataset.playbookGeneration=String(state.generations.playbook);document.body.dataset.cavgGeneration=String(state.generations.cavg);document.body.dataset.kaneGeneration=String(state.generations.kane);if(location.search.includes('e2e=1')&&state.generations.playbook>0)source.close()})
+  });};
+  source.onerror = () => { el.updated.textContent = `reconnecting ${new Date().toLocaleTimeString()}`;source.close();state.eventSource=null;setTimeout(()=>refresh().then(connectEvents),1000); };
 }
 
 async function replaySeek(clock) {
@@ -306,6 +314,7 @@ function applyPayload(payload) {
   el.kaneForwardMinute.disabled = !state.isReplay;
   const extendedAvailable = payload.mode === 'live' || payload.mode === 'replay';
   state.rows = payload.rows || [];
+  if(payload.cavg)state.extended=payload.cavg;
   renderKane(payload.kane || {});
   updateKaneSnapshotControls();
   detectKaneEntries(payload.kane || {});
@@ -393,7 +402,7 @@ function updateKaneSnapshotControls() {
 
 function detectKaneEntries(kane) {
   const symbols = new Set((kane.rows || []).filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter).map((row) => row.symbol));
-  if (state.kaneSymbols !== null && state.kaneSoundEnabled && !state.kaneSoundMuted && [...symbols].some((symbol) => !state.kaneSymbols.has(symbol))) playKaneAlertSound();
+  if (kane.health === 'READY' && state.kaneSymbols !== null && state.kaneSoundEnabled && !state.kaneSoundMuted && [...symbols].some((symbol) => !state.kaneSymbols.has(symbol))) playKaneAlertSound();
   state.kaneSymbols = symbols;
 }
 

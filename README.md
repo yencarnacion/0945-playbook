@@ -2,6 +2,8 @@
 
 See [PERFORMANCE.md](PERFORMANCE.md) for the streaming architecture, measured latency work, quota audit, configuration, and production runbooks.
 
+See [LATENCY_COMPLETION.md](LATENCY_COMPLETION.md) for the follow-up broadcast, generation recovery, prior-session initialization, gap recovery, sustained-load, and real-browser results.
+
 A compact Go dashboard for the 09:45 playbook. It scans a CSV watchlist, computes a TC2000-style rolling `C/AVGC15` signal, applies the B1-B5 branch rules, and serves a stable real-time dashboard for likely setups and actual signals.
 
 ## Setup

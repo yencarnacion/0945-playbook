@@ -29,12 +29,38 @@ type ExtendedProvider interface {
 	ExtendedSnapshot(context.Context, int64) dashboard.ExtendedState
 	AlertSoundPath() string
 }
-type UpdateProvider interface{ Updates() <-chan dashboard.Delta }
+type UpdateProvider interface {
+	Hub() *Hub
+	FullSnapshotInterval() time.Duration
+}
 type LatencyProvider interface {
 	LatencyHealth(context.Context) dashboard.LatencyHealth
 }
 
 func Serve(ctx context.Context, addr string, provider StateProvider) error {
+	mux := NewHandler(provider)
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.ListenAndServe() }()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+		err := <-errCh
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	}
+}
+
+func NewHandler(provider StateProvider) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		state := provider.Snapshot(r.Context())
@@ -62,15 +88,34 @@ func Serve(ctx context.Context, addr string, provider StateProvider) error {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("X-Accel-Buffering", "no")
-		initial := dashboard.Delta{Full: ptrState(provider.Snapshot(r.Context()))}
+		client := p.Hub().Subscribe()
+		defer client.Close()
+		snap := provider.Snapshot(r.Context())
+		initial := dashboard.Delta{ProtocolVersion: 1, Type: "full", PlaybookGeneration: snap.PlaybookGeneration, CAVGGeneration: snap.CAVGGeneration, KaneGeneration: snap.KaneGeneration, Full: ptrState(snap)}
 		writeSSE(w, initial)
 		f.Flush()
+		interval := p.FullSnapshotInterval()
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-r.Context().Done():
 				return
-			case d := <-p.Updates():
+			case d, ok := <-client.C:
+				if !ok {
+					return
+				}
 				writeSSE(w, d)
+				f.Flush()
+				if d.Type == "resync_required" {
+					return
+				}
+			case <-ticker.C:
+				s := provider.Snapshot(r.Context())
+				writeSSE(w, dashboard.Delta{ProtocolVersion: 1, Type: "full", PlaybookGeneration: s.PlaybookGeneration, CAVGGeneration: s.CAVGGeneration, KaneGeneration: s.KaneGeneration, Full: ptrState(s)})
 				f.Flush()
 			}
 		}
@@ -157,37 +202,11 @@ func Serve(ctx context.Context, addr string, provider StateProvider) error {
 
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
-		return err
+		panic(err)
 	}
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.ListenAndServe()
-	}()
-
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		err := <-errCh
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	case err := <-errCh:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
-		}
-		return err
-	}
+	return mux
 }
 
 func writeJSON(w http.ResponseWriter, value any) {

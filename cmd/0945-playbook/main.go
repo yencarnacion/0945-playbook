@@ -90,6 +90,9 @@ func run() error {
 				return err
 			}
 			r := runner.NewStreamingLive(projectName, cfg, loc, items, stream)
+			if backfill, e := massiveProvider(cfg, loc); e == nil {
+				r.SetBackfill(backfill)
+			}
 			go r.Run(ctx)
 			fmt.Printf("%s streaming live dashboard: http://localhost%s\n", projectName, displayAddr(cfg.App.Addr))
 			return server.Serve(ctx, cfg.App.Addr, r)

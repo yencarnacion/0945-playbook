@@ -19,17 +19,22 @@ type Stats struct {
 }
 
 type State struct {
-	Generation   uint64                `json:"generation"`
-	PublishedAt  string                `json:"published_at,omitempty"`
-	Project      string                `json:"project"`
-	Mode         string                `json:"mode"`
-	Clock        string                `json:"clock"`
-	Updated      string                `json:"updated"`
-	ChartBaseURL string                `json:"chart_base_url"`
-	VolumeFilter float64               `json:"volume_filter"`
-	Stats        Stats                 `json:"stats"`
-	Rows         []playbook.Evaluation `json:"rows"`
-	Kane         KaneState             `json:"kane"`
+	ProtocolVersion    int                   `json:"protocol_version"`
+	Generation         uint64                `json:"generation"`
+	PlaybookGeneration uint64                `json:"playbook_generation"`
+	CAVGGeneration     uint64                `json:"cavg_generation"`
+	KaneGeneration     uint64                `json:"kane_generation"`
+	PublishedAt        string                `json:"published_at,omitempty"`
+	Project            string                `json:"project"`
+	Mode               string                `json:"mode"`
+	Clock              string                `json:"clock"`
+	Updated            string                `json:"updated"`
+	ChartBaseURL       string                `json:"chart_base_url"`
+	VolumeFilter       float64               `json:"volume_filter"`
+	Stats              Stats                 `json:"stats"`
+	Rows               []playbook.Evaluation `json:"rows"`
+	Kane               KaneState             `json:"kane"`
+	CAVG               ExtendedState         `json:"cavg"`
 }
 
 type LatencyHealth struct {
@@ -45,15 +50,35 @@ type LatencyHealth struct {
 	StaleSymbols               int    `json:"stale_symbols"`
 	SilentSymbols              int    `json:"silent_symbols"`
 	Build                      string `json:"build"`
+	Gaps                       int    `json:"gaps"`
+	PlaybookGeneration         uint64 `json:"playbook_generation"`
+	CAVGGeneration             uint64 `json:"cavg_generation"`
+	KaneGeneration             uint64 `json:"kane_generation"`
+	Browsers                   any    `json:"browsers"`
+	PlaybookStatus             string `json:"playbook_status"`
+	CAVGStatus                 string `json:"cavg_status"`
+	KaneStatus                 string `json:"kane_status"`
 }
 
 type Delta struct {
-	Generation  uint64                `json:"generation"`
-	PublishedAt string                `json:"published_at"`
-	Rows        []playbook.Evaluation `json:"rows"`
-	Kane        *KaneState            `json:"kane,omitempty"`
-	Stats       Stats                 `json:"stats"`
-	Full        *State                `json:"full,omitempty"`
+	ProtocolVersion        int                   `json:"protocol_version"`
+	Type                   string                `json:"type"`
+	Reason                 string                `json:"reason,omitempty"`
+	PlaybookGeneration     uint64                `json:"playbook_generation"`
+	PlaybookBaseGeneration uint64                `json:"playbook_base_generation"`
+	CAVGGeneration         uint64                `json:"cavg_generation"`
+	CAVGBaseGeneration     uint64                `json:"cavg_base_generation"`
+	KaneGeneration         uint64                `json:"kane_generation"`
+	KaneBaseGeneration     uint64                `json:"kane_base_generation"`
+	LatestMarketEvent      string                `json:"latest_market_event,omitempty"`
+	Health                 string                `json:"health"`
+	Generation             uint64                `json:"generation"`
+	PublishedAt            string                `json:"published_at"`
+	Rows                   []playbook.Evaluation `json:"rows"`
+	Kane                   *KaneState            `json:"kane,omitempty"`
+	CAVG                   *ExtendedState        `json:"cavg,omitempty"`
+	Stats                  Stats                 `json:"stats"`
+	Full                   *State                `json:"full,omitempty"`
 }
 
 type KaneRow struct {
@@ -78,6 +103,9 @@ type KaneRow struct {
 	ChartURL           string  `json:"chart_url"`
 }
 type KaneState struct {
+	Generation  uint64         `json:"generation"`
+	PublishedAt string         `json:"published_at,omitempty"`
+	Health      string         `json:"health,omitempty"`
 	Available   bool           `json:"available"`
 	Preliminary bool           `json:"preliminary"`
 	Rows        []KaneRow      `json:"rows"`
@@ -91,6 +119,9 @@ type KaneSnapshot struct {
 }
 
 type ExtendedRow struct {
+	MarketEventTime    string  `json:"market_event_time,omitempty"`
+	EventAgeMS         float64 `json:"event_age_ms"`
+	Health             string  `json:"health,omitempty"`
 	Symbol             string  `json:"symbol"`
 	Name               string  `json:"name"`
 	Industry           string  `json:"industry"`
@@ -124,6 +155,9 @@ type ExtendedHistoryPoint struct {
 }
 
 type ExtendedState struct {
+	Generation       uint64                 `json:"generation"`
+	PublishedAt      string                 `json:"published_at,omitempty"`
+	Health           string                 `json:"health,omitempty"`
 	Available        bool                   `json:"available"`
 	WindowStart      string                 `json:"window_start"`
 	WindowEnd        string                 `json:"window_end"`

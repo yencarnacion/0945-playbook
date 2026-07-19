@@ -69,6 +69,8 @@ type Evaluation struct {
 	MarketEventTime string       `json:"market_event_time,omitempty"`
 	EventAgeMS      float64      `json:"event_age_ms"`
 	Stale           bool         `json:"stale"`
+	Health          string       `json:"health,omitempty"`
+	Gap             bool         `json:"gap"`
 	Spark           []SparkPoint `json:"spark"`
 	Error           string       `json:"error"`
 }
