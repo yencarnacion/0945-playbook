@@ -83,6 +83,17 @@ func run() error {
 
 	switch mode {
 	case "live":
+		if cfg.Massive.Mode == "websocket" {
+			key := strings.TrimSpace(os.Getenv(cfg.Massive.APIKeyEnv))
+			stream, err := data.NewMassiveStream(key, cfg.Massive.WebSocketURL, cfg.Massive.SubscriptionBatchSize)
+			if err != nil {
+				return err
+			}
+			r := runner.NewStreamingLive(projectName, cfg, loc, items, stream)
+			go r.Run(ctx)
+			fmt.Printf("%s streaming live dashboard: http://localhost%s\n", projectName, displayAddr(cfg.App.Addr))
+			return server.Serve(ctx, cfg.App.Addr, r)
+		}
 		prov, err := massiveProvider(cfg, loc)
 		if err != nil {
 			return err
@@ -130,7 +141,11 @@ func run() error {
 func massiveProvider(cfg config.Config, loc *time.Location) (data.Provider, error) {
 	key := strings.TrimSpace(os.Getenv(cfg.Massive.APIKeyEnv))
 	timeout := config.Duration(cfg.Massive.RequestTimeout)
-	return data.NewMassiveProvider(key, cfg.Massive.SourceMultiplier, cfg.Massive.SourceTimespan, cfg.Massive.Adjusted, timeout, loc)
+	p, err := data.NewMassiveProvider(key, cfg.Massive.SourceMultiplier, cfg.Massive.SourceTimespan, cfg.Massive.Adjusted, timeout, loc)
+	if err != nil {
+		return nil, err
+	}
+	return data.NewGovernedProvider(p, data.NewGovernor(cfg.Massive.RESTMaxRequestsPerSecond, cfg.Massive.RESTMaxConcurrency, cfg.Massive.RESTRetryLimit)), nil
 }
 
 func chooseDay(flagValue string, cfg config.Config, loc *time.Location) string {

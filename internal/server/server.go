@@ -29,12 +29,51 @@ type ExtendedProvider interface {
 	ExtendedSnapshot(context.Context, int64) dashboard.ExtendedState
 	AlertSoundPath() string
 }
+type UpdateProvider interface{ Updates() <-chan dashboard.Delta }
+type LatencyProvider interface {
+	LatencyHealth(context.Context) dashboard.LatencyHealth
+}
 
 func Serve(ctx context.Context, addr string, provider StateProvider) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/state", func(w http.ResponseWriter, r *http.Request) {
 		state := provider.Snapshot(r.Context())
 		writeJSON(w, state)
+	})
+	mux.HandleFunc("/api/health/latency", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := provider.(LatencyProvider)
+		if !ok {
+			http.Error(w, "latency health unavailable", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, p.LatencyHealth(r.Context()))
+	})
+	mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := provider.(UpdateProvider)
+		if !ok {
+			http.Error(w, "stream unavailable", http.StatusNotFound)
+			return
+		}
+		f, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "stream unsupported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("X-Accel-Buffering", "no")
+		initial := dashboard.Delta{Full: ptrState(provider.Snapshot(r.Context()))}
+		writeSSE(w, initial)
+		f.Flush()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case d := <-p.Updates():
+				writeSSE(w, d)
+				f.Flush()
+			}
+		}
 	})
 	mux.HandleFunc("/api/extended", func(w http.ResponseWriter, r *http.Request) {
 		extended, ok := provider.(ExtendedProvider)
@@ -157,4 +196,15 @@ func writeJSON(w http.ResponseWriter, value any) {
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+func ptrState(s dashboard.State) *dashboard.State { return &s }
+func writeSSE(w http.ResponseWriter, value any) {
+	b, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write([]byte("data: "))
+	_, _ = w.Write(b)
+	_, _ = w.Write([]byte("\n\n"))
 }

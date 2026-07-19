@@ -19,6 +19,8 @@ type Stats struct {
 }
 
 type State struct {
+	Generation   uint64                `json:"generation"`
+	PublishedAt  string                `json:"published_at,omitempty"`
 	Project      string                `json:"project"`
 	Mode         string                `json:"mode"`
 	Clock        string                `json:"clock"`
@@ -28,6 +30,30 @@ type State struct {
 	Stats        Stats                 `json:"stats"`
 	Rows         []playbook.Evaluation `json:"rows"`
 	Kane         KaneState             `json:"kane"`
+}
+
+type LatencyHealth struct {
+	Status                     string  `json:"status"`
+	WebSocket                  any     `json:"websocket"`
+	Market                     any     `json:"market"`
+	CurrentEventAgeMS          float64 `json:"current_event_age_ms"`
+	BackendPublicationAgeMS    float64 `json:"backend_publication_age_ms"`
+	CAVGResultAgeMS            float64 `json:"cavg_result_age_ms"`
+	KaneResultAgeMS            float64 `json:"kane_result_age_ms"`
+	OriginalResultAgeMS        float64 `json:"original_result_age_ms"`
+	P50MS, P95MS, P99MS, MaxMS float64
+	StaleSymbols               int    `json:"stale_symbols"`
+	SilentSymbols              int    `json:"silent_symbols"`
+	Build                      string `json:"build"`
+}
+
+type Delta struct {
+	Generation  uint64                `json:"generation"`
+	PublishedAt string                `json:"published_at"`
+	Rows        []playbook.Evaluation `json:"rows"`
+	Kane        *KaneState            `json:"kane,omitempty"`
+	Stats       Stats                 `json:"stats"`
+	Full        *State                `json:"full,omitempty"`
 }
 
 type KaneRow struct {

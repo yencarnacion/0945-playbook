@@ -64,10 +64,13 @@ type Evaluation struct {
 	Active    bool `json:"active"`
 	Exited    bool `json:"exited"`
 
-	ChartURL    string       `json:"chart_url"`
-	LastUpdated string       `json:"last_updated"`
-	Spark       []SparkPoint `json:"spark"`
-	Error       string       `json:"error"`
+	ChartURL        string       `json:"chart_url"`
+	LastUpdated     string       `json:"last_updated"`
+	MarketEventTime string       `json:"market_event_time,omitempty"`
+	EventAgeMS      float64      `json:"event_age_ms"`
+	Stale           bool         `json:"stale"`
+	Spark           []SparkPoint `json:"spark"`
+	Error           string       `json:"error"`
 }
 
 type tradeState struct {

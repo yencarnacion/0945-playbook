@@ -33,6 +33,12 @@ type LiveRunner struct {
 	scanning        bool
 	extendedStarted time.Time
 	extendedHistory []dashboard.ExtendedSnapshot
+	cachedKane      dashboard.KaneState
+	cachedState     dashboard.State
+}
+
+func (r *LiveRunner) precomputeKaneLocked(now time.Time) {
+	r.cachedKane = kaneState(r.items, r.barsBySymbol, now, r.loc, r.cfg.Scan.ChartBaseURL)
 }
 
 func NewLive(project string, cfg config.Config, loc *time.Location, items []watchlist.Item, prov data.Provider) *LiveRunner {

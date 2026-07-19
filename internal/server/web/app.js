@@ -32,6 +32,7 @@ const state = {
   extendedSort: { key: 'ratio', direction: 'desc' },
   renderedStats: '',
   renderedExtendedSummary: '',
+  eventSource: null,
 };
 
 const el = {
@@ -240,12 +241,28 @@ async function refresh() {
     } else {
       updateHistoryStatus();
     }
-    await refreshExtended();
+    if (state.view === 'extended') await refreshExtended();
   } catch (error) {
     el.updated.textContent = `offline ${new Date().toLocaleTimeString()}`;
   } finally {
     state.refreshing = false;
   }
+}
+
+function connectEvents() {
+  if (state.isReplay || state.eventSource) return;
+  const source = new EventSource('/api/events'); state.eventSource = source;
+  source.onmessage = (message) => requestAnimationFrame(() => {
+    const delta = JSON.parse(message.data);
+    if (delta.full) { state.livePayload = delta.full; applyPayload(delta.full); return; }
+    if (!state.livePayload) return;
+    const bySymbol = new Map((state.livePayload.rows || []).map((row) => [row.symbol, row]));
+    for (const row of delta.rows || []) bySymbol.set(row.symbol, row);
+    state.livePayload.rows = [...bySymbol.values()]; state.livePayload.stats = delta.stats || state.livePayload.stats;
+    state.livePayload.generation = delta.generation; state.livePayload.published_at = delta.published_at;
+    applyPayload(state.livePayload);
+  });
+  source.onerror = () => { el.updated.textContent = `reconnecting ${new Date().toLocaleTimeString()}`; };
 }
 
 async function replaySeek(clock) {
@@ -936,7 +953,4 @@ function escapeHTML(value) {
   }[ch]));
 }
 
-refresh();
-state.timer = setInterval(() => {
-  if (!state.isReplay) refresh();
-}, 1000);
+refresh().then(connectEvents);

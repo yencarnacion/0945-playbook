@@ -4,6 +4,14 @@ app:
   timezone: America/New_York
 
 massive:
+  mode: websocket
+  websocket_url: ""
+  subscription_batch_size: 200
+  rest_max_requests_per_second: 80
+  rest_max_concurrency: 8
+  rest_retry_limit: 3
+  reconnect_min_backoff: 1s
+  reconnect_max_backoff: 30s
   api_key_env: MASSIVE_API_KEY
   source_multiplier: 5
   source_timespan: second
@@ -18,6 +26,14 @@ scan:
   poll_interval: 10s
   data_dir: data
   chart_base_url: http://localhost:8081
+  max_event_age: 10s
+  publish_interval: 250ms
+  queue_capacity: 8192
+  warmup_required: true
+
+dashboard:
+  transport: sse
+  full_snapshot_interval: 5m
 
 extended_scan:
   start: "04:00"

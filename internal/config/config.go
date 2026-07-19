@@ -12,16 +12,17 @@ import (
 )
 
 type Config struct {
-	App      AppConfig          `yaml:"app"`
-	Massive  MassiveConfig      `yaml:"massive"`
-	Scan     ScanConfig         `yaml:"scan"`
-	Extended ExtendedScanConfig `yaml:"extended_scan"`
-	Session  SessionConfig      `yaml:"session"`
-	Signal   SignalConfig       `yaml:"signal"`
-	Risk     RiskConfig         `yaml:"risk"`
-	ORB      ORBConfig          `yaml:"orb"`
-	Branch   BranchConfig       `yaml:"branch"`
-	Replay   ReplayConfig       `yaml:"replay"`
+	App       AppConfig          `yaml:"app"`
+	Massive   MassiveConfig      `yaml:"massive"`
+	Scan      ScanConfig         `yaml:"scan"`
+	Extended  ExtendedScanConfig `yaml:"extended_scan"`
+	Session   SessionConfig      `yaml:"session"`
+	Signal    SignalConfig       `yaml:"signal"`
+	Risk      RiskConfig         `yaml:"risk"`
+	ORB       ORBConfig          `yaml:"orb"`
+	Branch    BranchConfig       `yaml:"branch"`
+	Replay    ReplayConfig       `yaml:"replay"`
+	Dashboard DashboardConfig    `yaml:"dashboard"`
 }
 
 type AppConfig struct {
@@ -31,12 +32,20 @@ type AppConfig struct {
 }
 
 type MassiveConfig struct {
-	APIKeyEnv          string `yaml:"api_key_env"`
-	SourceMultiplier   int    `yaml:"source_multiplier"`
-	SourceTimespan     string `yaml:"source_timespan"`
-	Adjusted           bool   `yaml:"adjusted"`
-	RequestTimeout     string `yaml:"request_timeout"`
-	ConcurrentRequests int    `yaml:"concurrent_requests"`
+	Mode                     string `yaml:"mode"`
+	WebSocketURL             string `yaml:"websocket_url"`
+	SubscriptionBatchSize    int    `yaml:"subscription_batch_size"`
+	RESTMaxRequestsPerSecond int    `yaml:"rest_max_requests_per_second"`
+	RESTMaxConcurrency       int    `yaml:"rest_max_concurrency"`
+	RESTRetryLimit           int    `yaml:"rest_retry_limit"`
+	ReconnectMinBackoff      string `yaml:"reconnect_min_backoff"`
+	ReconnectMaxBackoff      string `yaml:"reconnect_max_backoff"`
+	APIKeyEnv                string `yaml:"api_key_env"`
+	SourceMultiplier         int    `yaml:"source_multiplier"`
+	SourceTimespan           string `yaml:"source_timespan"`
+	Adjusted                 bool   `yaml:"adjusted"`
+	RequestTimeout           string `yaml:"request_timeout"`
+	ConcurrentRequests       int    `yaml:"concurrent_requests"`
 }
 
 type ScanConfig struct {
@@ -46,6 +55,15 @@ type ScanConfig struct {
 	PollInterval           string  `yaml:"poll_interval"`
 	DataDir                string  `yaml:"data_dir"`
 	ChartBaseURL           string  `yaml:"chart_base_url"`
+	MaxEventAge            string  `yaml:"max_event_age"`
+	PublishInterval        string  `yaml:"publish_interval"`
+	QueueCapacity          int     `yaml:"queue_capacity"`
+	WarmupRequired         bool    `yaml:"warmup_required"`
+}
+
+type DashboardConfig struct {
+	Transport            string `yaml:"transport"`
+	FullSnapshotInterval string `yaml:"full_snapshot_interval"`
 }
 
 type ExtendedScanConfig struct {
@@ -147,6 +165,9 @@ func Defaults() Config {
 			Timezone: "America/New_York",
 		},
 		Massive: MassiveConfig{
+			Mode: "websocket", SubscriptionBatchSize: 200,
+			RESTMaxRequestsPerSecond: 80, RESTMaxConcurrency: 8, RESTRetryLimit: 3,
+			ReconnectMinBackoff: "1s", ReconnectMaxBackoff: "30s",
 			APIKeyEnv:          "MASSIVE_API_KEY",
 			SourceMultiplier:   5,
 			SourceTimespan:     "second",
@@ -161,6 +182,7 @@ func Defaults() Config {
 			PollInterval:           "10s",
 			DataDir:                "data",
 			ChartBaseURL:           "http://localhost:8081",
+			MaxEventAge:            "10s", PublishInterval: "250ms", QueueCapacity: 8192, WarmupRequired: true,
 		},
 		Extended: ExtendedScanConfig{
 			Start:            "04:00",
@@ -235,6 +257,7 @@ func Defaults() Config {
 			DefaultStart: "09:30",
 			Speed:        1,
 		},
+		Dashboard: DashboardConfig{Transport: "sse", FullSnapshotInterval: "5m"},
 	}
 }
 
@@ -275,6 +298,32 @@ func (c Config) Validate() error {
 	}
 	if c.Massive.ConcurrentRequests <= 0 {
 		return fmt.Errorf("massive.concurrent_requests must be positive")
+	}
+	if c.Massive.Mode != "websocket" && c.Massive.Mode != "rest" {
+		return fmt.Errorf("massive.mode must be websocket or rest")
+	}
+	if c.Massive.SubscriptionBatchSize < 1 || c.Massive.SubscriptionBatchSize > 1000 {
+		return fmt.Errorf("massive.subscription_batch_size must be 1..1000")
+	}
+	if c.Massive.RESTMaxRequestsPerSecond < 1 || c.Massive.RESTMaxRequestsPerSecond > 100 {
+		return fmt.Errorf("massive.rest_max_requests_per_second must be 1..100")
+	}
+	if c.Massive.RESTMaxConcurrency < 1 || c.Massive.RESTMaxConcurrency > 64 {
+		return fmt.Errorf("massive.rest_max_concurrency must be 1..64")
+	}
+	if c.Massive.RESTRetryLimit < 0 || c.Massive.RESTRetryLimit > 10 {
+		return fmt.Errorf("massive.rest_retry_limit must be 0..10")
+	}
+	for name, value := range map[string]string{"massive.reconnect_min_backoff": c.Massive.ReconnectMinBackoff, "massive.reconnect_max_backoff": c.Massive.ReconnectMaxBackoff, "scan.max_event_age": c.Scan.MaxEventAge, "scan.publish_interval": c.Scan.PublishInterval, "dashboard.full_snapshot_interval": c.Dashboard.FullSnapshotInterval} {
+		if _, err := time.ParseDuration(value); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	if c.Scan.QueueCapacity < 1 {
+		return fmt.Errorf("scan.queue_capacity must be positive")
+	}
+	if c.Dashboard.Transport != "sse" && c.Dashboard.Transport != "polling" {
+		return fmt.Errorf("dashboard.transport must be sse or polling")
 	}
 	if c.Scan.WatchlistPath == "" {
 		return fmt.Errorf("scan.watchlist_path is required")
