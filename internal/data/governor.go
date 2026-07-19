@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand"
+	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -18,11 +19,15 @@ type RESTMetrics struct {
 	BackoffMS       uint64 `json:"backoff_ms"`
 }
 type HTTPError struct {
-	Status     int
-	RetryAfter string
+	Status                                       int
+	RetryAfter                                   string
+	Retryable                                    bool
+	Endpoint, Method, RequestID, ProviderMessage string
+	Err                                          error
 }
 
 func (e *HTTPError) Error() string { return "HTTP " + strconv.Itoa(e.Status) }
+func (e *HTTPError) Unwrap() error { return e.Err }
 
 type Governor struct {
 	tokens                                      chan struct{}
@@ -100,8 +105,8 @@ func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error
 			d := time.Duration(1<<min(attempt, 6))*100*time.Millisecond + time.Duration(rand.Intn(100))*time.Millisecond
 			he := new(HTTPError)
 			if errors.As(err, &he) && he.RetryAfter != "" {
-				if secs, e := strconv.Atoi(he.RetryAfter); e == nil {
-					d = time.Duration(secs) * time.Second
+				if wait, ok := retryAfterDelay(he.RetryAfter, time.Now()); ok {
+					d = wait
 				}
 			}
 			g.backoff.Add(uint64(d.Milliseconds()))
@@ -134,7 +139,7 @@ func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error
 			return nil
 		}
 		he := new(HTTPError)
-		if !errors.As(err, &he) || he.Status != 429 && he.Status < 500 {
+		if !errors.As(err, &he) || !(he.Retryable || retryableStatus(he.Status)) {
 			return err
 		}
 		if he.Status == 429 {
@@ -148,6 +153,21 @@ func (g *Governor) Do(ctx context.Context, fn func(context.Context) error) error
 		g.circuitMu.Unlock()
 	}
 	return err
+}
+
+func retryableStatus(status int) bool {
+	return status == 429 || status == 500 || status == 502 || status == 503 || status == 504
+}
+
+func retryAfterDelay(value string, now time.Time) (time.Duration, bool) {
+	if secs, err := strconv.Atoi(value); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second, true
+	}
+	at, err := http.ParseTime(value)
+	if err != nil || !at.After(now) {
+		return 0, false
+	}
+	return at.Sub(now), true
 }
 func (g *Governor) Metrics() RESTMetrics {
 	return RESTMetrics{Requests: g.requests.Load(), Retries: g.retry.Load(), TooManyRequests: g.tooMany.Load(), InFlight: int64(g.inflight.Load()), BackoffMS: g.backoff.Load()}

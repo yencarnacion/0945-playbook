@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,6 +19,22 @@ type MassiveProvider struct {
 	adjusted   bool
 	loc        *time.Location
 }
+type responseMeta struct {
+	status                int
+	retryAfter, requestID string
+}
+type responseMetaKey struct{}
+type metaTransport struct{ base http.RoundTripper }
+
+func (t metaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(r)
+	if m, ok := r.Context().Value(responseMetaKey{}).(*responseMeta); ok && resp != nil {
+		m.status = resp.StatusCode
+		m.retryAfter = resp.Header.Get("Retry-After")
+		m.requestID = resp.Header.Get("X-Request-ID")
+	}
+	return resp, err
+}
 
 func NewMassiveProvider(apiKey string, multiplier int, timespan string, adjusted bool, timeout time.Duration, loc *time.Location) (*MassiveProvider, error) {
 	if strings.TrimSpace(apiKey) == "" {
@@ -29,17 +46,23 @@ func NewMassiveProvider(apiKey string, multiplier int, timespan string, adjusted
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	hc := &http.Client{Timeout: timeout}
+	hc := &http.Client{Timeout: timeout, Transport: metaTransport{base: http.DefaultTransport}}
+	return newMassiveProviderWithHTTP(apiKey, multiplier, timespan, adjusted, loc, hc), nil
+}
+
+func newMassiveProviderWithHTTP(apiKey string, multiplier int, timespan string, adjusted bool, loc *time.Location, hc *http.Client) *MassiveProvider {
 	return &MassiveProvider{
 		client:     polygon.NewWithClient(apiKey, hc),
 		multiplier: multiplier,
 		timespan:   models.Timespan(strings.ToLower(timespan)),
 		adjusted:   adjusted,
 		loc:        loc,
-	}, nil
+	}
 }
 
 func (p *MassiveProvider) FetchBars(ctx context.Context, symbol string, start, end time.Time) ([]Bar, error) {
+	meta := &responseMeta{}
+	ctx = context.WithValue(ctx, responseMetaKey{}, meta)
 	order := models.Asc
 	limit := 50000
 	adjusted := p.adjusted
@@ -69,11 +92,32 @@ func (p *MassiveProvider) FetchBars(ctx context.Context, symbol string, start, e
 		})
 	}
 	if err := iter.Err(); err != nil {
-		return nil, err
+		return nil, normalizeMassiveError(err, meta, "GET", "/v2/aggs/ticker")
 	}
 
 	if p.timespan == models.Minute && p.multiplier == 1 {
 		return bars, nil
 	}
 	return NormalizeToMinutes(bars, p.loc), nil
+}
+func normalizeMassiveError(err error, m *responseMeta, method, endpoint string) error {
+	status, requestID, message := m.status, m.requestID, err.Error()
+	var pe *models.ErrorResponse
+	if errors.As(err, &pe) {
+		if status == 0 {
+			status = pe.StatusCode
+		}
+		if requestID == "" {
+			requestID = pe.RequestID
+		}
+		if pe.ErrorMessage != "" {
+			message = pe.ErrorMessage
+		}
+	}
+	retry := retryableStatus(status)
+	if status == 0 {
+		var temporary interface{ Temporary() bool }
+		retry = errors.As(err, &temporary) && temporary.Temporary()
+	}
+	return &HTTPError{Status: status, RetryAfter: m.retryAfter, Retryable: retry, Endpoint: endpoint, Method: method, RequestID: requestID, ProviderMessage: message, Err: err}
 }

@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -32,6 +33,12 @@ type SymbolSnapshot struct {
 	Gap                                                    bool      `json:"gap"`
 	GapStart                                               time.Time `json:"gap_start,omitempty"`
 	GapEnd                                                 time.Time `json:"gap_end,omitempty"`
+	EligibleBarCount                                       int       `json:"eligible_bar_count"`
+	SessionDate                                            string    `json:"session_date"`
+	OldestWindowMinute                                     time.Time `json:"oldest_window_minute,omitempty"`
+	NewestWindowMinute                                     time.Time `json:"newest_window_minute,omitempty"`
+	LastCompletedMinute                                    time.Time `json:"last_completed_minute,omitempty"`
+	DevelopingMinute                                       time.Time `json:"developing_minute,omitempty"`
 }
 
 type Metrics struct {
@@ -47,17 +54,43 @@ type Metrics struct {
 	LastReceive      time.Time `json:"last_receive"`
 	LastEvent        time.Time `json:"last_event"`
 }
+type GapState struct {
+	ID                      uint64 `json:"id"`
+	Version                 uint64 `json:"version"`
+	Start, End              time.Time
+	Cause                   string
+	CreatedAt, LastExpanded time.Time
+	Status                  string
+	Attempts                int
+	LastError               string
+	Granularity             string
+}
+type RecoveryToken struct {
+	Symbol         string
+	GapID, Version uint64
+	Start, End     time.Time
+}
+
+// SymbolStatus is the narrow, allocation-free view used by health checks.
+type SymbolStatus struct {
+	LastEvent time.Time
+	Warm      bool
+	Gap       bool
+	Session   string
+}
+
+type eventKey struct{ start, end int64 }
 
 type symbolState struct {
 	mu                                                      sync.RWMutex
 	bars                                                    []data.Bar
 	barLast                                                 map[int64]time.Time
-	seen                                                    map[string]struct{}
-	seenOrder                                               []string
+	seen                                                    map[eventKey]struct{}
+	seenOrder                                               []eventKey
+	authoritative                                           map[int64]struct{}
 	lastEvent, lastReceipt                                  time.Time
 	price, sessionVolume, premarketVolume, high, low, pv, v float64
-	gap                                                     bool
-	gapStart, gapEnd                                        time.Time
+	gap                                                     GapState
 }
 
 type Engine struct {
@@ -67,6 +100,7 @@ type Engine struct {
 	received, processed, invalid, duplicates, outOfOrder, dropped atomic.Uint64
 	lastReceive, lastEvent                                        atomic.Int64
 	onChange                                                      func(string, time.Time, time.Time)
+	nextGapID                                                     atomic.Uint64
 }
 
 func New(symbols []string, loc *time.Location, capacity int, onChange func(string, time.Time, time.Time)) *Engine {
@@ -77,7 +111,7 @@ func New(symbols []string, loc *time.Location, capacity int, onChange func(strin
 	for _, s := range symbols {
 		s = strings.ToUpper(strings.TrimSpace(s))
 		if s != "" {
-			e.symbols[s] = &symbolState{barLast: make(map[int64]time.Time), seen: make(map[string]struct{}, 64)}
+			e.symbols[s] = &symbolState{barLast: make(map[int64]time.Time), seen: make(map[eventKey]struct{}, 64), authoritative: make(map[int64]struct{})}
 		}
 	}
 	return e
@@ -107,17 +141,7 @@ func (e *Engine) Offer(ev Event) bool {
 		return true
 	default:
 		e.dropped.Add(1)
-		if s := e.symbols[strings.ToUpper(ev.Symbol)]; s != nil {
-			s.mu.Lock()
-			s.gap = true
-			if s.gapStart.IsZero() || ev.Start.Before(s.gapStart) {
-				s.gapStart = ev.Start
-			}
-			if ev.End.After(s.gapEnd) {
-				s.gapEnd = ev.End
-			}
-			s.mu.Unlock()
-		}
+		e.MarkGap(ev.Symbol, ev.Start, ev.End, "queue_overflow")
 		return false
 	}
 }
@@ -140,7 +164,7 @@ func (e *Engine) apply(ev Event) {
 	if ev.Start.IsZero() {
 		ev.Start = ev.End.Add(-time.Second)
 	}
-	key := ev.Symbol + "/" + ev.Start.UTC().Format(time.RFC3339Nano) + "/" + ev.End.UTC().Format(time.RFC3339Nano)
+	key := eventKey{start: ev.Start.UnixNano(), end: ev.End.UnixNano()}
 	s.mu.Lock()
 	if _, ok := s.seen[key]; ok {
 		s.mu.Unlock()
@@ -158,6 +182,11 @@ func (e *Engine) apply(ev Event) {
 		e.outOfOrder.Add(1)
 	}
 	minute := ev.Start.In(e.loc).Truncate(time.Minute).UTC()
+	if _, recovered := s.authoritative[minute.Unix()]; recovered {
+		s.mu.Unlock()
+		e.duplicates.Add(1)
+		return
+	}
 	i := sort.Search(len(s.bars), func(i int) bool { return !s.bars[i].Time.Before(minute) })
 	if i == len(s.bars) || !s.bars[i].Time.Equal(minute) {
 		b := data.Bar{Time: minute, Open: ev.Open, High: ev.High, Low: ev.Low, Close: ev.Close, Volume: ev.Volume, VWAP: ev.VWAP}
@@ -224,16 +253,37 @@ func (e *Engine) Snapshot(symbol string, avgN int) (SymbolSnapshot, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	o := SymbolSnapshot{Symbol: symbol, Bars: append([]data.Bar(nil), s.bars...), Price: s.price, SessionVolume: s.sessionVolume, PremarketVolume: s.premarketVolume, High: s.high, Low: s.low, LastEvent: s.lastEvent, LastReceipt: s.lastReceipt, Gap: s.gap, GapStart: s.gapStart, GapEnd: s.gapEnd}
+	o := SymbolSnapshot{Symbol: symbol, Bars: append([]data.Bar(nil), s.bars...), Price: s.price, SessionVolume: s.sessionVolume, PremarketVolume: s.premarketVolume, High: s.high, Low: s.low, LastEvent: s.lastEvent, LastReceipt: s.lastReceipt, Gap: s.gap.ID != 0, GapStart: s.gap.Start, GapEnd: s.gap.End}
 	if s.v > 0 {
 		o.VWAP = s.pv / s.v
 	}
 	if avgN < 1 {
 		avgN = 15
 	}
-	if len(s.bars) >= avgN {
+	// C/Avg is session-local: 04:00–20:00 America/New_York for the
+	// provider event's trading date. Prior-session summaries are never eligible.
+	sessionDay := s.lastEvent.In(e.loc).Format("2006-01-02")
+	eligible := make([]data.Bar, 0, avgN)
+	for i := len(s.bars) - 1; i >= 0 && len(eligible) < avgN; i-- {
+		bt := s.bars[i].Time.In(e.loc)
+		clock := bt.Hour()*60 + bt.Minute()
+		if bt.Format("2006-01-02") == sessionDay && clock >= 4*60 && clock < 20*60 {
+			eligible = append(eligible, s.bars[i])
+		}
+	}
+	o.EligibleBarCount = len(eligible)
+	o.SessionDate = sessionDay
+	if len(eligible) > 0 {
+		o.DevelopingMinute = eligible[0].Time
+		o.NewestWindowMinute = eligible[0].Time
+		if len(eligible) > 1 {
+			o.LastCompletedMinute = eligible[1].Time
+		}
+		o.OldestWindowMinute = eligible[len(eligible)-1].Time
+	}
+	if len(eligible) >= avgN {
 		sum := 0.0
-		for _, b := range s.bars[len(s.bars)-avgN:] {
+		for _, b := range eligible[:avgN] {
 			sum += b.Close
 		}
 		o.Average15 = sum / float64(avgN)
@@ -268,36 +318,182 @@ func (e *Engine) Seed(symbol string, bars []data.Bar) {
 }
 
 func (e *Engine) MarkAllGap(start, end time.Time) {
-	for _, s := range e.symbols {
-		s.mu.Lock()
-		s.gap = true
-		if s.gapStart.IsZero() || start.Before(s.gapStart) {
-			s.gapStart = start
-		}
-		if end.After(s.gapEnd) {
-			s.gapEnd = end
-		}
-		s.mu.Unlock()
+	for symbol := range e.symbols {
+		e.MarkGap(symbol, start, end, "websocket_interruption")
 	}
 }
-func (e *Engine) ResolveGap(symbol string, bars []data.Bar) bool {
+func (e *Engine) MarkGap(symbol string, start, end time.Time, cause string) GapState {
 	s := e.symbols[strings.ToUpper(symbol)]
-	if s == nil || len(bars) == 0 {
-		return false
+	if s == nil {
+		return GapState{}
 	}
-	e.Seed(symbol, bars)
+	now := time.Now()
 	s.mu.Lock()
-	s.gap = false
-	s.gapStart = time.Time{}
-	s.gapEnd = time.Time{}
-	s.mu.Unlock()
-	return true
+	defer s.mu.Unlock()
+	if s.gap.ID == 0 {
+		s.gap = GapState{ID: e.nextGapID.Add(1), Version: 1, Start: start, End: end, Cause: cause, CreatedAt: now, LastExpanded: now, Status: "unresolved", Granularity: "minute"}
+	} else {
+		s.gap.Version++
+		if start.Before(s.gap.Start) {
+			s.gap.Start = start
+		}
+		if end.After(s.gap.End) {
+			s.gap.End = end
+		}
+		s.gap.LastExpanded = now
+		s.gap.Status = "unresolved"
+	}
+	return s.gap
+}
+func (e *Engine) GapState(symbol string) (GapState, bool) {
+	s := e.symbols[strings.ToUpper(symbol)]
+	if s == nil {
+		return GapState{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.gap, s.gap.ID != 0
+}
+func (e *Engine) HasGap(symbol string) bool { _, ok := e.GapState(symbol); return ok }
+
+func (e *Engine) SymbolStatus(symbol string, required int) (SymbolStatus, bool) {
+	s := e.symbols[strings.ToUpper(symbol)]
+	if s == nil {
+		return SymbolStatus{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status := SymbolStatus{LastEvent: s.lastEvent, Gap: s.gap.ID != 0}
+	if s.lastEvent.IsZero() {
+		return status, true
+	}
+	status.Session = s.lastEvent.In(e.loc).Format("2006-01-02")
+	eligible := 0
+	for i := len(s.bars) - 1; i >= 0 && eligible < required; i-- {
+		at := s.bars[i].Time.In(e.loc)
+		clock := at.Hour()*60 + at.Minute()
+		if at.Format("2006-01-02") == status.Session && clock >= 4*60 && clock < 20*60 {
+			eligible++
+		}
+	}
+	status.Warm = eligible >= required
+	return status, true
+}
+func (e *Engine) BeginGapRecovery(symbol string) (RecoveryToken, bool) {
+	s := e.symbols[strings.ToUpper(symbol)]
+	if s == nil {
+		return RecoveryToken{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gap.ID == 0 {
+		return RecoveryToken{}, false
+	}
+	s.gap.Status = "recovering"
+	s.gap.Attempts++
+	return RecoveryToken{Symbol: symbol, GapID: s.gap.ID, Version: s.gap.Version, Start: s.gap.Start, End: s.gap.End}, true
+}
+func (e *Engine) AbortGapRecovery(token RecoveryToken, err error) {
+	s := e.symbols[strings.ToUpper(token.Symbol)]
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gap.ID == token.GapID && s.gap.Version == token.Version {
+		s.gap.Status = "failed"
+		if err != nil {
+			s.gap.LastError = err.Error()
+		}
+	}
+}
+func (e *Engine) ApplyAuthoritativeBars(token RecoveryToken, bars []data.Bar) error {
+	s := e.symbols[strings.ToUpper(token.Symbol)]
+	if s == nil {
+		return fmt.Errorf("unknown symbol")
+	}
+	if len(bars) == 0 {
+		return fmt.Errorf("empty authoritative backfill")
+	}
+	start, end := token.Start.UTC().Truncate(time.Minute), token.End.UTC().Truncate(time.Minute)
+	covered := map[int64]data.Bar{}
+	for _, b := range bars {
+		m := b.Time.UTC().Truncate(time.Minute)
+		if m.Before(start) || m.After(end) {
+			continue
+		}
+		covered[m.Unix()] = b
+	}
+	for m := start; !m.After(end); m = m.Add(time.Minute) {
+		if _, ok := covered[m.Unix()]; !ok {
+			return fmt.Errorf("partial backfill: missing %s", m.Format(time.RFC3339))
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.gap.ID != token.GapID || s.gap.Version != token.Version {
+		return fmt.Errorf("stale recovery version")
+	}
+	out := make([]data.Bar, 0, len(s.bars)+len(covered))
+	for _, b := range s.bars {
+		m := b.Time.UTC().Truncate(time.Minute)
+		if m.Before(start) || m.After(end) {
+			out = append(out, b)
+		}
+	}
+	for _, b := range covered {
+		b.Time = b.Time.UTC().Truncate(time.Minute)
+		out = append(out, b)
+		s.authoritative[b.Time.Unix()] = struct{}{}
+		s.barLast[b.Time.Unix()] = token.End
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
+	s.bars = out
+	e.recomputeDerivedLocked(s)
+	s.gap = GapState{}
+	return nil
+}
+
+func (e *Engine) recomputeDerivedLocked(s *symbolState) {
+	s.sessionVolume, s.premarketVolume, s.high, s.low, s.pv, s.v = 0, 0, 0, 0, 0, 0
+	if len(s.bars) == 0 {
+		s.price = 0
+		return
+	}
+	session := s.lastEvent.In(e.loc).Format("2006-01-02")
+	for _, b := range s.bars {
+		at := b.Time.In(e.loc)
+		if at.Format("2006-01-02") != session {
+			continue
+		}
+		if at.Hour() >= 4 && (at.Hour() < 9 || at.Hour() == 9 && at.Minute() < 30) {
+			s.premarketVolume += b.Volume
+		}
+		if at.Hour() >= 9 && (at.Hour() > 9 || at.Minute() >= 30) && at.Hour() < 16 {
+			s.sessionVolume += b.Volume
+			if s.high == 0 || b.High > s.high {
+				s.high = b.High
+			}
+			if s.low == 0 || b.Low < s.low {
+				s.low = b.Low
+			}
+			if b.VWAP > 0 {
+				s.pv += b.VWAP * b.Volume
+				s.v += b.Volume
+			}
+		}
+	}
+	s.price = s.bars[len(s.bars)-1].Close
+}
+func (e *Engine) ResolveGap(symbol string, bars []data.Bar) bool {
+	token, ok := e.BeginGapRecovery(symbol)
+	return ok && e.ApplyAuthoritativeBars(token, bars) == nil
 }
 func (e *Engine) GapCount() int {
 	n := 0
 	for _, s := range e.symbols {
 		s.mu.RLock()
-		if s.gap {
+		if s.gap.ID != 0 {
 			n++
 		}
 		s.mu.RUnlock()

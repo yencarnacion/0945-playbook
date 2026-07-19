@@ -82,6 +82,10 @@ type Delta struct {
 }
 
 type KaneRow struct {
+	AlertEligible      bool    `json:"alert_eligible"`
+	AlertID            string  `json:"alert_id,omitempty"`
+	Health             string  `json:"health,omitempty"`
+	EventAgeMS         float64 `json:"event_age_ms"`
 	Symbol             string  `json:"symbol"`
 	Name               string  `json:"name"`
 	Industry           string  `json:"industry"`
@@ -119,6 +123,8 @@ type KaneSnapshot struct {
 }
 
 type ExtendedRow struct {
+	AlertEligible      bool    `json:"alert_eligible"`
+	AlertID            string  `json:"alert_id,omitempty"`
 	MarketEventTime    string  `json:"market_event_time,omitempty"`
 	EventAgeMS         float64 `json:"event_age_ms"`
 	Health             string  `json:"health,omitempty"`

@@ -35,6 +35,7 @@ const state = {
   eventSource: null,
   generations: { playbook: 0, cavg: 0, kane: 0 },
   browserMetrics: { messages: 0, parseMS: [], mergeMS: [], renderMS: [], resyncs: 0 },
+  alertIDs: new Set(),
 };
 
 const el = {
@@ -402,7 +403,9 @@ function updateKaneSnapshotControls() {
 
 function detectKaneEntries(kane) {
   const symbols = new Set((kane.rows || []).filter((row) => Number(row.volume_from_0400 || 0) >= state.kaneVolumeFilter).map((row) => row.symbol));
-  if (kane.health === 'READY' && state.kaneSymbols !== null && state.kaneSoundEnabled && !state.kaneSoundMuted && [...symbols].some((symbol) => !state.kaneSymbols.has(symbol))) playKaneAlertSound();
+  const alerts = (kane.rows || []).filter((row) => row.alert_eligible && row.alert_id && !state.alertIDs.has(row.alert_id));
+  for (const row of alerts) state.alertIDs.add(row.alert_id);
+  if (kane.health === 'READY' && alerts.length && state.kaneSoundEnabled && !state.kaneSoundMuted) playKaneAlertSound();
   state.kaneSymbols = symbols;
 }
 
@@ -453,10 +456,9 @@ async function refreshExtended(selectedID = 0) {
 
 function detectExtendedAdditions(rows) {
   const next = new Set(rows.map((row) => row.symbol));
-  if (state.extendedSymbols !== null && state.soundEnabled && !state.soundMuted) {
-    const additions = [...next].filter((symbol) => !state.extendedSymbols.has(symbol));
-    if (additions.length) playAlertSound();
-  }
+  const alerts = rows.filter((row) => row.alert_eligible && row.alert_id && !state.alertIDs.has(row.alert_id));
+  for (const row of alerts) state.alertIDs.add(row.alert_id);
+  if (alerts.length && state.soundEnabled && !state.soundMuted) playAlertSound();
   state.extendedSymbols = next;
 }
 

@@ -18,10 +18,12 @@ type SparkPoint struct {
 }
 
 type Evaluation struct {
-	Symbol   string `json:"symbol"`
-	Name     string `json:"name"`
-	Industry string `json:"industry"`
-	Order    int    `json:"order"`
+	AlertEligible bool   `json:"alert_eligible"`
+	AlertID       string `json:"alert_id,omitempty"`
+	Symbol        string `json:"symbol"`
+	Name          string `json:"name"`
+	Industry      string `json:"industry"`
+	Order         int    `json:"order"`
 
 	Status string `json:"status"`
 	Action string `json:"action"`
