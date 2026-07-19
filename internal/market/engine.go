@@ -2,6 +2,7 @@ package market
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -64,12 +65,15 @@ type GapState struct {
 	Attempts                int
 	LastError               string
 	Granularity             string
+	NextAttempt             time.Time
 }
 type RecoveryToken struct {
 	Symbol         string
 	GapID, Version uint64
 	Start, End     time.Time
 }
+
+var ErrDevelopingGap = errors.New("gap intersects developing minute")
 
 // SymbolStatus is the narrow, allocation-free view used by health checks.
 type SymbolStatus struct {
@@ -342,6 +346,7 @@ func (e *Engine) MarkGap(symbol string, start, end time.Time, cause string) GapS
 		}
 		s.gap.LastExpanded = now
 		s.gap.Status = "unresolved"
+		s.gap.NextAttempt = time.Time{}
 	}
 	return s.gap
 }
@@ -408,36 +413,61 @@ func (e *Engine) AbortGapRecovery(token RecoveryToken, err error) {
 	}
 }
 func (e *Engine) ApplyAuthoritativeBars(token RecoveryToken, bars []data.Bar) error {
+	// Compatibility entry point for callers recovering a known completed range.
+	_, err := e.ApplyAuthoritativeBarsAt(token, bars, token.End.UTC().Truncate(time.Minute).Add(time.Minute))
+	return err
+}
+
+// ApplyAuthoritativeBarsAt only finalizes minutes completed before now. A REST
+// aggregate for the current minute has no coverage watermark, so it is ignored
+// and the gap remains RECOVERING while newer WebSocket seconds keep merging.
+func (e *Engine) ApplyAuthoritativeBarsAt(token RecoveryToken, bars []data.Bar, now time.Time) (bool, error) {
 	s := e.symbols[strings.ToUpper(token.Symbol)]
 	if s == nil {
-		return fmt.Errorf("unknown symbol")
-	}
-	if len(bars) == 0 {
-		return fmt.Errorf("empty authoritative backfill")
+		return false, fmt.Errorf("unknown symbol")
 	}
 	start, end := token.Start.UTC().Truncate(time.Minute), token.End.UTC().Truncate(time.Minute)
+	developing := now.UTC().Truncate(time.Minute)
+	recoveryEnd := end
+	if !recoveryEnd.Before(developing) {
+		recoveryEnd = developing.Add(-time.Minute)
+	}
+	if recoveryEnd.Before(start) {
+		s.mu.Lock()
+		if s.gap.ID != token.GapID || s.gap.Version != token.Version {
+			s.mu.Unlock()
+			return false, fmt.Errorf("stale recovery version")
+		}
+		s.gap.Status = "recovering"
+		s.gap.NextAttempt = developing.Add(time.Minute)
+		s.mu.Unlock()
+		return false, ErrDevelopingGap
+	}
+	if len(bars) == 0 {
+		return false, fmt.Errorf("empty authoritative backfill")
+	}
 	covered := map[int64]data.Bar{}
 	for _, b := range bars {
 		m := b.Time.UTC().Truncate(time.Minute)
-		if m.Before(start) || m.After(end) {
+		if m.Before(start) || m.After(recoveryEnd) {
 			continue
 		}
 		covered[m.Unix()] = b
 	}
-	for m := start; !m.After(end); m = m.Add(time.Minute) {
+	for m := start; !m.After(recoveryEnd); m = m.Add(time.Minute) {
 		if _, ok := covered[m.Unix()]; !ok {
-			return fmt.Errorf("partial backfill: missing %s", m.Format(time.RFC3339))
+			return false, fmt.Errorf("partial backfill: missing %s", m.Format(time.RFC3339))
 		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.gap.ID != token.GapID || s.gap.Version != token.Version {
-		return fmt.Errorf("stale recovery version")
+		return false, fmt.Errorf("stale recovery version")
 	}
 	out := make([]data.Bar, 0, len(s.bars)+len(covered))
 	for _, b := range s.bars {
 		m := b.Time.UTC().Truncate(time.Minute)
-		if m.Before(start) || m.After(end) {
+		if m.Before(start) || m.After(recoveryEnd) {
 			out = append(out, b)
 		}
 	}
@@ -450,8 +480,18 @@ func (e *Engine) ApplyAuthoritativeBars(token RecoveryToken, bars []data.Bar) er
 	sort.Slice(out, func(i, j int) bool { return out[i].Time.Before(out[j].Time) })
 	s.bars = out
 	e.recomputeDerivedLocked(s)
+	if recoveryEnd.Before(end) {
+		// Consume this recovery token. The unresolved developing suffix receives a
+		// new version so this older operation can never clear it later.
+		s.gap.Version++
+		s.gap.Start = developing
+		s.gap.Status = "recovering"
+		s.gap.LastExpanded = now
+		s.gap.NextAttempt = developing.Add(time.Minute)
+		return false, nil
+	}
 	s.gap = GapState{}
-	return nil
+	return true, nil
 }
 
 func (e *Engine) recomputeDerivedLocked(s *symbolState) {

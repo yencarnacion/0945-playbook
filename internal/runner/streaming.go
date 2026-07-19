@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -114,7 +115,7 @@ func (s *StreamingLive) Run(ctx context.Context) {
 			case ev := <-s.stream.Events():
 				if !s.engine.Offer(market.Event{Symbol: ev.Symbol, Start: ev.Start, End: ev.End, Open: ev.Open, High: ev.High, Low: ev.Low, Close: ev.Close, Volume: ev.Volume, VWAP: ev.VWAP, AccumulatedVolume: ev.AccumulatedVolume, Received: ev.Received}) {
 					go s.recoverGap(ctx, ev.Symbol, ev.Start, ev.End)
-				} else if gap, ok := s.engine.GapState(ev.Symbol); ok {
+				} else if gap, ok := s.engine.GapState(ev.Symbol); ok && (gap.NextAttempt.IsZero() || !ev.End.Before(gap.NextAttempt)) {
 					go s.recoverGap(ctx, ev.Symbol, gap.Start, ev.End)
 				}
 			}
@@ -191,7 +192,13 @@ func (s *StreamingLive) recoverGap(ctx context.Context, symbol string, start, en
 	}
 	bars, err := s.backfill.FetchBars(ctx, symbol, token.Start.Truncate(time.Minute), token.End.Truncate(time.Minute).Add(time.Minute-time.Nanosecond))
 	if err == nil {
-		err = s.engine.ApplyAuthoritativeBars(token, bars)
+		_, err = s.engine.ApplyAuthoritativeBarsAt(token, bars, s.now())
+	}
+	if errors.Is(err, market.ErrDevelopingGap) {
+		// Massive minute aggregates do not carry a precise partial-minute coverage
+		// watermark. Keep the gap open and accept later live seconds; verification
+		// will retry after the minute closes.
+		return
 	}
 	if err != nil {
 		s.engine.AbortGapRecovery(token, err)
